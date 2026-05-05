@@ -10,6 +10,7 @@ import {
   FinancialAdjustments,
   Sale,
   calculateDre,
+  generateRestaurantInsights,
   normalizeText,
 } from "@/lib/financial-calculations";
 import { formatCurrency, formatPercent } from "@/lib/formatters";
@@ -178,6 +179,10 @@ function readSales() {
   }
 }
 
+function getTodayValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function readFinancialAdjustments() {
   const storedAdjustments = localStorage.getItem(FINANCIAL_ADJUSTMENTS_STORAGE_KEY);
 
@@ -308,6 +313,10 @@ export default function DashboardPage() {
     alert: "border-norteia-alert/35 bg-norteia-alert/10 text-norteia-alert",
     risk: "border-norteia-risk/35 bg-norteia-risk/10 text-norteia-risk",
   };
+  const restaurantInsights = generateRestaurantInsights(sales, getTodayValue()).slice(
+    0,
+    3,
+  );
 
   return (
     <PageShell
@@ -422,6 +431,31 @@ export default function DashboardPage() {
           />
         ))}
       </div>
+
+      <section className="space-y-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-primary">
+            Restaurante hoje
+          </p>
+          <h2 className="mt-2 font-title text-xl font-bold text-norteia-text">
+            Gatilhos inteligentes
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-norteia-muted">
+            Resumo pratico das vendas fechadas hoje em Mesas.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {restaurantInsights.map((insight) => (
+            <AlertCard
+              key={`${insight.title}-${insight.description}`}
+              title={insight.title}
+              description={insight.description}
+              tone={insight.tone}
+            />
+          ))}
+        </div>
+      </section>
 
       <section
         className={`rounded-2xl border p-5 shadow-soft ${

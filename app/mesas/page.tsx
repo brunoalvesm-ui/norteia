@@ -3,16 +3,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
-import { products } from "@/lib/products";
+import { defaultProducts, type Product } from "@/lib/products";
 import { formatCurrency } from "@/lib/formatters";
-import { OPEN_TABLES_STORAGE_KEY, SALES_STORAGE_KEY } from "@/lib/storage-keys";
-import type { Sale } from "@/lib/financial-calculations";
+import {
+  OPEN_TABLES_STORAGE_KEY,
+  PRODUCTS_STORAGE_KEY,
+  SALES_STORAGE_KEY,
+} from "@/lib/storage-keys";
+import { getSaleItemSubtotal, type Sale } from "@/lib/financial-calculations";
 
 type OrderItem = {
   productId: string;
   name: string;
+  category?: string;
   quantity: number;
   unitPrice: number;
+  estimatedCost?: number;
 };
 
 type TableOrder = {
@@ -63,7 +69,12 @@ function buildSalesCsv(salesToExport: Sale[]) {
     new Date(sale.closedAt).toLocaleString("pt-BR"),
     sale.tableNumber,
     sale.items
-      .map((item) => `${item.name} (${formatCurrency(item.unitPrice)})`)
+      .map(
+        (item) =>
+          `${item.name} (${formatCurrency(item.unitPrice)} | ${formatCurrency(
+            getSaleItemSubtotal(item),
+          )})`,
+      )
       .join(" | "),
     sale.items.map((item) => `${item.quantity}x ${item.name}`).join(" | "),
     formatCurrency(sale.total),
@@ -88,14 +99,33 @@ function readOpenTables() {
   }
 }
 
+function readProducts() {
+  const storedProducts = localStorage.getItem(PRODUCTS_STORAGE_KEY);
+
+  if (!storedProducts) {
+    return defaultProducts;
+  }
+
+  try {
+    const parsedProducts = JSON.parse(storedProducts) as Product[];
+    const activeProducts = parsedProducts.filter((product) => product.active);
+
+    return activeProducts.length > 0 ? activeProducts : defaultProducts;
+  } catch {
+    return defaultProducts;
+  }
+}
+
 export default function MesasPage() {
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
   const [orders, setOrders] = useState<TableOrder[]>([]);
+  const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setOrders(readOpenTables());
+    setAvailableProducts(readProducts());
     setSales(readSales());
   }, []);
 
@@ -160,7 +190,7 @@ export default function MesasPage() {
       return;
     }
 
-    const product = products.find((item) => item.id === productId);
+    const product = availableProducts.find((item) => item.id === productId);
 
     if (!product) {
       return;
@@ -180,8 +210,10 @@ export default function MesasPage() {
               {
                 productId: product.id,
                 name: product.name,
+                category: product.category,
                 quantity: 1,
-                unitPrice: product.price,
+                unitPrice: product.salePrice,
+                estimatedCost: product.estimatedCost,
               },
             ],
           },
@@ -205,8 +237,10 @@ export default function MesasPage() {
               {
                 productId: product.id,
                 name: product.name,
+                category: product.category,
                 quantity: 1,
-                unitPrice: product.price,
+                unitPrice: product.salePrice,
+                estimatedCost: product.estimatedCost,
               },
             ],
           };
@@ -294,18 +328,46 @@ export default function MesasPage() {
       return;
     }
 
+    const closedAt = new Date().toISOString();
+    const saleItems = currentItems.map((item) => {
+      const registeredProduct = availableProducts.find(
+        (product) => product.id === item.productId,
+      );
+      const category = item.category ?? registeredProduct?.category ?? "Sem categoria";
+      const estimatedUnitCost =
+        item.estimatedCost ?? registeredProduct?.estimatedCost ?? 0;
+      const subtotal = item.quantity * item.unitPrice;
+      const totalCost = item.quantity * estimatedUnitCost;
+      const grossProfit = subtotal - totalCost;
+
+      return {
+        productId: item.productId,
+        name: item.name,
+        category,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        estimatedUnitCost,
+        subtotal,
+        totalCost,
+        grossProfit,
+        total: subtotal,
+      };
+    });
+    const totalCost = saleItems.reduce(
+      (total, item) => total + item.totalCost,
+      0,
+    );
+    const grossProfit = tableTotal - totalCost;
+
     const sale: Sale = {
       id: `${Date.now()}-${selectedTable}`,
       tableNumber: selectedTable,
       total: tableTotal,
-      closedAt: new Date().toISOString(),
-      items: currentItems.map((item) => ({
-        productId: item.productId,
-        name: item.name,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        total: item.quantity * item.unitPrice,
-      })),
+      totalCost,
+      grossProfit,
+      closedAt,
+      saleDate: closedAt.slice(0, 10),
+      items: saleItems,
     };
 
     const nextSales = [...sales, sale];
@@ -547,7 +609,7 @@ export default function MesasPage() {
               Adicionar produto
             </p>
             <div className="grid gap-2">
-              {products.map((product) => (
+              {availableProducts.map((product) => (
                 <button
                   key={product.id}
                   type="button"
@@ -558,7 +620,7 @@ export default function MesasPage() {
                     {product.name}
                   </span>
                   <span className="text-sm font-bold text-norteia-primary">
-                    {formatCurrency(product.price)}
+                    {formatCurrency(product.salePrice)}
                   </span>
                   <Plus className="h-5 w-5 text-norteia-primary" aria-hidden="true" />
                 </button>

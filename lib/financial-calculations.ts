@@ -34,13 +34,36 @@ export type Sale = {
   tableNumber: number;
   total: number;
   closedAt: string;
+  saleDate?: string;
+  totalCost?: number;
+  grossProfit?: number;
   items: Array<{
     productId: string;
     name: string;
+    category?: string;
     quantity: number;
     unitPrice: number;
-    total: number;
+    estimatedUnitCost?: number;
+    subtotal?: number;
+    totalCost?: number;
+    grossProfit?: number;
+    total?: number;
   }>;
+};
+
+export type RestaurantInsight = {
+  title: string;
+  description: string;
+  tone: "support" | "alert" | "risk" | "primary";
+};
+
+type RestaurantProductSummary = {
+  productId: string;
+  name: string;
+  quantity: number;
+  revenue: number;
+  grossProfit: number;
+  marginPercent: number;
 };
 
 export const financialRulesByBusinessType: Record<BusinessType, FinancialRules> = {
@@ -131,6 +154,204 @@ export function calculateMargin(amount: number, revenue: number) {
 
 export function calculateMissedMoney(revenue: number, directCost: number, idealRate: number) {
   return Math.max(directCost - revenue * idealRate, 0);
+}
+
+export function getSaleDay(sale: Sale) {
+  return sale.saleDate ?? sale.closedAt.slice(0, 10);
+}
+
+export function getSaleItemSubtotal(item: Sale["items"][number]) {
+  return item.subtotal ?? item.total ?? item.quantity * item.unitPrice;
+}
+
+export function getSaleItemTotalCost(item: Sale["items"][number]) {
+  return item.totalCost ?? (item.estimatedUnitCost ?? 0) * item.quantity;
+}
+
+export function getSaleItemGrossProfit(item: Sale["items"][number]) {
+  return item.grossProfit ?? getSaleItemSubtotal(item) - getSaleItemTotalCost(item);
+}
+
+export function getSaleTotalCost(sale: Sale) {
+  return (
+    sale.totalCost ??
+    sale.items.reduce((total, item) => total + getSaleItemTotalCost(item), 0)
+  );
+}
+
+export function getSaleGrossProfit(sale: Sale) {
+  return sale.grossProfit ?? sale.total - getSaleTotalCost(sale);
+}
+
+export function getSalesByDay(sales: Sale[], day: string) {
+  return sales.filter((sale) => getSaleDay(sale) === day);
+}
+
+export function calculateDailySalesTotal(sales: Sale[], day: string) {
+  return getSalesByDay(sales, day).reduce((total, sale) => total + sale.total, 0);
+}
+
+export function calculateDailySalesCount(sales: Sale[], day: string) {
+  return getSalesByDay(sales, day).length;
+}
+
+export function calculateDailyAverageTicket(sales: Sale[], day: string) {
+  const count = calculateDailySalesCount(sales, day);
+
+  if (count === 0) {
+    return 0;
+  }
+
+  return calculateDailySalesTotal(sales, day) / count;
+}
+
+export function calculateDailyEstimatedGrossProfit(sales: Sale[], day: string) {
+  return getSalesByDay(sales, day).reduce(
+    (total, sale) => total + getSaleGrossProfit(sale),
+    0,
+  );
+}
+
+export function calculateDailyCmv(sales: Sale[], day: string) {
+  const salesTotal = calculateDailySalesTotal(sales, day);
+
+  if (salesTotal === 0) {
+    return 0;
+  }
+
+  const totalCost = getSalesByDay(sales, day).reduce(
+    (total, sale) => total + getSaleTotalCost(sale),
+    0,
+  );
+
+  return totalCost / salesTotal;
+}
+
+function formatMoneyForInsight(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatPercentForInsight(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    maximumFractionDigits: 1,
+  }).format(value * 100);
+}
+
+function summarizeRestaurantProducts(sales: Sale[]) {
+  const products = new Map<string, RestaurantProductSummary>();
+
+  sales.forEach((sale) => {
+    sale.items.forEach((item) => {
+      const current = products.get(item.productId) ?? {
+        productId: item.productId,
+        name: item.name,
+        quantity: 0,
+        revenue: 0,
+        grossProfit: 0,
+        marginPercent: 0,
+      };
+      const revenue = getSaleItemSubtotal(item);
+      const grossProfit = getSaleItemGrossProfit(item);
+      const nextRevenue = current.revenue + revenue;
+      const nextGrossProfit = current.grossProfit + grossProfit;
+
+      products.set(item.productId, {
+        ...current,
+        quantity: current.quantity + item.quantity,
+        revenue: nextRevenue,
+        grossProfit: nextGrossProfit,
+        marginPercent: nextRevenue > 0 ? nextGrossProfit / nextRevenue : 0,
+      });
+    });
+  });
+
+  return Array.from(products.values());
+}
+
+export function generateRestaurantInsights(
+  sales: Sale[],
+  day: string,
+): RestaurantInsight[] {
+  const daySales = getSalesByDay(sales, day);
+  const salesTotal = calculateDailySalesTotal(sales, day);
+  const averageTicket = calculateDailyAverageTicket(sales, day);
+  const cmv = calculateDailyCmv(sales, day);
+  const products = summarizeRestaurantProducts(daySales);
+  const bestSeller = [...products].sort(
+    (first, second) => second.quantity - first.quantity,
+  )[0];
+  const lowMarginProduct = [...products]
+    .filter((product) => product.quantity >= 2 && product.marginPercent < 0.35)
+    .sort((first, second) => second.quantity - first.quantity)[0];
+  const opportunityProduct = lowMarginProduct ?? bestSeller;
+  const insights: RestaurantInsight[] = [];
+
+  if (daySales.length === 0) {
+    return [
+      {
+        title: "Sem vendas no dia",
+        description:
+          "Feche uma conta em Mesas para o Norteia gerar recomendacoes praticas sobre faturamento, CMV e produtos.",
+        tone: "support",
+      },
+    ];
+  }
+
+  if (bestSeller) {
+    insights.push({
+      title: "Produto campeao",
+      description: `${bestSeller.name} foi o mais vendido hoje, com ${bestSeller.quantity} unidades e ${formatMoneyForInsight(bestSeller.revenue)} de faturamento.`,
+      tone: "primary",
+    });
+  }
+
+  if (lowMarginProduct) {
+    insights.push({
+      title: "Produto vende bem, mas lucra pouco",
+      description: `${lowMarginProduct.name} vendeu ${lowMarginProduct.quantity} unidades, mas sua margem estimada esta em ${formatPercentForInsight(lowMarginProduct.marginPercent)}%. Revise preco ou custo para proteger o lucro.`,
+      tone: "alert",
+    });
+  }
+
+  if (cmv > 0.55) {
+    insights.push({
+      title: "CMV alto",
+      description: `Seu CMV de hoje esta em ${formatPercentForInsight(cmv)}%. Isso pode estar comprimindo seu lucro mesmo com ${formatMoneyForInsight(salesTotal)} em vendas.`,
+      tone: "risk",
+    });
+  }
+
+  if (averageTicket > 0) {
+    insights.push({
+      title: "Ticket medio",
+      description: `Seu ticket medio foi de ${formatMoneyForInsight(averageTicket)}. Uma estrategia de combos pode elevar esse valor sem depender apenas de mais mesas.`,
+      tone: averageTicket < 30 ? "alert" : "support",
+    });
+  }
+
+  if (opportunityProduct) {
+    const monthlyGain = opportunityProduct.quantity * 2 * 30;
+
+    insights.push({
+      title: "Oportunidade de preco",
+      description: `Se aumentar R$ 2,00 no produto ${opportunityProduct.name}, o lucro mensal pode subir aproximadamente ${formatMoneyForInsight(monthlyGain)}, considerando o volume atual.`,
+      tone: "primary",
+    });
+  }
+
+  if (salesTotal >= 300 && cmv > 0 && cmv <= 0.45) {
+    insights.push({
+      title: "Dia com boa relacao venda e custo",
+      description: `O faturamento chegou a ${formatMoneyForInsight(salesTotal)} com CMV de ${formatPercentForInsight(cmv)}. Mantenha esse padrao e acompanhe os produtos campeoes.`,
+      tone: "primary",
+    });
+  }
+
+  return insights;
 }
 
 export function calculateDre(

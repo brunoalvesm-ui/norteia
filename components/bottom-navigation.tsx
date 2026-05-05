@@ -7,6 +7,8 @@ import {
   ChartNoAxesCombined,
   Home,
   Landmark,
+  Package,
+  ReceiptText,
   SquareMenu,
 } from "lucide-react";
 
@@ -32,6 +34,16 @@ const items = [
     icon: SquareMenu,
   },
   {
+    href: "/vendas",
+    label: "Vendas",
+    icon: ReceiptText,
+  },
+  {
+    href: "/produtos",
+    label: "Produtos",
+    icon: Package,
+  },
+  {
     href: "/rotina",
     label: "Rotina",
     icon: CalendarCheck,
@@ -43,7 +55,7 @@ export function BottomNavigation() {
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-norteia-line bg-norteia-bg/86 px-3 pb-3 pt-2 backdrop-blur-xl">
-      <div className="mx-auto grid max-w-md grid-cols-5 gap-1 rounded-3xl border border-norteia-line bg-norteia-card/92 p-1 shadow-soft sm:max-w-2xl lg:max-w-4xl">
+      <div className="mx-auto grid max-w-md grid-cols-7 gap-1 rounded-3xl border border-norteia-line bg-norteia-card/92 p-1 shadow-soft sm:max-w-2xl lg:max-w-4xl">
         {items.map((item) => {
           const Icon = item.icon;
           const isActive =
@@ -54,7 +66,7 @@ export function BottomNavigation() {
               key={item.href}
               href={item.href}
               aria-current={isActive ? "page" : undefined}
-              className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg px-2 text-xs font-medium transition ${
+              className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[10px] font-medium transition sm:px-2 sm:text-xs ${
                 isActive
                   ? "bg-norteia-primary text-norteia-bg shadow-glow"
                   : "text-norteia-muted hover:bg-norteia-card-2 hover:text-norteia-text"

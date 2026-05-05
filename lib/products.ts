@@ -1,33 +1,53 @@
 export type Product = {
   id: string;
   name: string;
-  price: number;
+  category: string;
+  salePrice: number;
+  estimatedCost: number;
+  active: boolean;
 };
 
 export const products: Product[] = [
   {
     id: "prato-executivo",
     name: "Prato executivo",
-    price: 32,
+    category: "Pratos",
+    salePrice: 32,
+    estimatedCost: 14,
+    active: true,
   },
   {
     id: "hamburguer",
     name: "Hamburguer",
-    price: 28,
+    category: "Pratos",
+    salePrice: 28,
+    estimatedCost: 12,
+    active: true,
   },
   {
     id: "refrigerante",
     name: "Refrigerante",
-    price: 8,
+    category: "Bebidas",
+    salePrice: 8,
+    estimatedCost: 3,
+    active: true,
   },
   {
     id: "suco-natural",
     name: "Suco natural",
-    price: 12,
+    category: "Bebidas",
+    salePrice: 12,
+    estimatedCost: 4,
+    active: true,
   },
   {
     id: "sobremesa",
     name: "Sobremesa",
-    price: 16,
+    category: "Sobremesas",
+    salePrice: 16,
+    estimatedCost: 6,
+    active: true,
   },
 ];
+
+export const defaultProducts = products;
