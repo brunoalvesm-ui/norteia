@@ -47,6 +47,11 @@ const routineTemplate: RoutineItem[] = [
     completed: false,
   },
   {
+    id: "weeklyPayables",
+    label: "Revisar contas a pagar da semana",
+    completed: false,
+  },
+  {
     id: "strategicAlerts",
     label: "Ver alertas estrategicos",
     completed: false,

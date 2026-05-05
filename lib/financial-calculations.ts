@@ -36,6 +36,40 @@ export type FinancialAdjustments = {
   updatedAt?: string;
 };
 
+export type PayableStatus = "previsto" | "pago" | "atrasado" | "cancelado";
+
+export type DreCategory =
+  | "CMV / Custo direto"
+  | "Folha de pagamento"
+  | "Aluguel"
+  | "Energia"
+  | "Agua"
+  | "Internet/Telefone"
+  | "Marketing"
+  | "Contabilidade"
+  | "Taxas e tarifas"
+  | "Impostos"
+  | "Manutencao"
+  | "Embalagens"
+  | "Delivery/Apps"
+  | "Despesas administrativas"
+  | "Outras despesas";
+
+export type Payable = {
+  id: string;
+  description: string;
+  supplier?: string;
+  dreCategory: DreCategory;
+  accountType: string;
+  amount: number;
+  dueDate: string;
+  paymentDate?: string;
+  status: PayableStatus;
+  recurring: boolean;
+  note?: string;
+  createdAt: string;
+};
+
 export type Sale = {
   id: string;
   tableNumber: number;
@@ -333,6 +367,77 @@ export function calculateDailyCmv(sales: Sale[], day: string) {
   return totalCost / salesTotal;
 }
 
+function getMonthKey(dateValue: string) {
+  return dateValue.slice(0, 7);
+}
+
+export function getPayablesByCompetence(
+  payables: Payable[] = [],
+  monthKey = new Date().toISOString().slice(0, 7),
+) {
+  return payables.filter(
+    (payable) =>
+      payable.status !== "cancelado" &&
+      (payable.status === "previsto" || payable.status === "pago") &&
+      getMonthKey(payable.dueDate) === monthKey,
+  );
+}
+
+export function summarizePayablesByDreCategory(payables: Payable[] = []) {
+  return payables.reduce(
+    (summary, payable) => {
+      summary[payable.dreCategory] =
+        (summary[payable.dreCategory] ?? 0) + payable.amount;
+
+      return summary;
+    },
+    {} as Partial<Record<DreCategory, number>>,
+  );
+}
+
+export function calculatePayablesDreBuckets(
+  payables: Payable[] = [],
+  monthKey = new Date().toISOString().slice(0, 7),
+) {
+  const competencePayables = getPayablesByCompetence(payables, monthKey);
+  const byCategory = summarizePayablesByDreCategory(competencePayables);
+  const directCostCategories: DreCategory[] = [
+    "CMV / Custo direto",
+    "Embalagens",
+    "Delivery/Apps",
+  ];
+  const taxesCategories: DreCategory[] = ["Impostos", "Taxas e tarifas"];
+  const directCost = directCostCategories.reduce(
+    (total, category) => total + (byCategory[category] ?? 0),
+    0,
+  );
+  const taxes = taxesCategories.reduce(
+    (total, category) => total + (byCategory[category] ?? 0),
+    0,
+  );
+  const fixedExpenses = competencePayables.reduce((total, payable) => {
+    if (
+      directCostCategories.includes(payable.dreCategory) ||
+      taxesCategories.includes(payable.dreCategory)
+    ) {
+      return total;
+    }
+
+    return total + payable.amount;
+  }, 0);
+
+  return {
+    byCategory,
+    directCost,
+    fixedExpenses,
+    taxes,
+    hasDirectCost: directCost > 0,
+    hasFixedExpenses: fixedExpenses > 0,
+    hasTaxes: taxes > 0,
+    hasPayables: competencePayables.length > 0,
+  };
+}
+
 function formatMoneyForInsight(value: number) {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -464,6 +569,7 @@ export function calculateDre(
   profile: BusinessProfile,
   adjustments?: FinancialAdjustments | null,
   sales: Sale[] = [],
+  payables: Payable[] = [],
 ) {
   const businessType = normalizeBusinessType(profile.businessType);
   const rules = financialRulesByBusinessType[businessType];
@@ -475,9 +581,19 @@ export function calculateDre(
     businessType,
     profile.taxRegime,
   );
-  const directCost = adjustments?.directCost ?? revenue * rules.directCost;
-  const fixedExpenses = adjustments?.fixedExpenses ?? revenue * rules.fixedExpenses;
-  const taxes = adjustments?.taxes ?? estimatedTaxes.amount;
+  const payableBuckets = calculatePayablesDreBuckets(payables);
+  const directCost =
+    payableBuckets.hasDirectCost
+      ? payableBuckets.directCost
+      : adjustments?.directCost ?? revenue * rules.directCost;
+  const fixedExpenses =
+    payableBuckets.hasFixedExpenses
+      ? payableBuckets.fixedExpenses
+      : adjustments?.fixedExpenses ?? revenue * rules.fixedExpenses;
+  const taxes =
+    payableBuckets.hasTaxes
+      ? payableBuckets.taxes
+      : adjustments?.taxes ?? estimatedTaxes.amount;
   const profit = revenue - directCost - fixedExpenses - taxes;
   const netMargin = calculateMargin(profit, revenue);
   const directCostPercent = calculateMargin(directCost, revenue);
@@ -494,6 +610,7 @@ export function calculateDre(
     netMargin,
     directCostPercent,
     missedMoney,
+    payableBuckets,
     rules,
   };
 }

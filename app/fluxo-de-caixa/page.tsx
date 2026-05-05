@@ -8,6 +8,7 @@ import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
   FinancialAdjustments,
+  Payable,
   Sale,
   calculateDre,
   calculatePayrollEstimate,
@@ -16,6 +17,7 @@ import { formatCurrency, formatShortDate } from "@/lib/formatters";
 import {
   BUSINESS_PROFILE_STORAGE_KEY,
   FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
+  PAYABLES_STORAGE_KEY,
   SALES_STORAGE_KEY,
 } from "@/lib/storage-keys";
 
@@ -28,6 +30,7 @@ type CashMovement = {
   category: string;
   type: "entrada" | "saida";
   amount: number;
+  status?: string;
 };
 
 function addDays(date: Date, days: number) {
@@ -36,13 +39,21 @@ function addDays(date: Date, days: number) {
   return nextDate;
 }
 
+function getDayDifference(from: Date, dateValue: string) {
+  const start = new Date(from.toISOString().slice(0, 10));
+  const target = new Date(`${dateValue}T00:00:00`);
+
+  return Math.ceil((target.getTime() - start.getTime()) / 86400000);
+}
+
 function buildMovements(
   profile: BusinessProfile,
   today: Date,
   adjustments?: FinancialAdjustments | null,
   sales: Sale[] = [],
+  payables: Payable[] = [],
 ) {
-  const dre = calculateDre(profile, adjustments, sales);
+  const dre = calculateDre(profile, adjustments, sales, payables);
   const { businessType, directCost, fixedExpenses, revenue, taxes } = dre;
   const payroll = calculatePayrollEstimate(revenue, profile.employees);
   const initialBalance = adjustments?.cashBalance ?? revenue * 0.28;
@@ -133,6 +144,32 @@ function buildMovements(
     });
   }
 
+  payables
+    .filter((payable) => payable.status !== "cancelado")
+    .forEach((payable) => {
+      const isPaid = payable.status === "pago";
+      const dateValue = isPaid ? payable.paymentDate ?? payable.dueDate : payable.dueDate;
+      const day = getDayDifference(today, dateValue);
+
+      if (isPaid && day < -7) {
+        return;
+      }
+
+      if (!isPaid && (day < 0 || day > 30)) {
+        return;
+      }
+
+      movements.push({
+        day: isPaid ? Math.max(day, 0) : Math.max(day, 1),
+        date: new Date(`${dateValue}T00:00:00`),
+        title: payable.description,
+        category: `${payable.dreCategory}${isPaid ? " | pago" : ""}`,
+        type: "saida",
+        amount: payable.amount,
+        status: payable.status,
+      });
+    });
+
   return {
     businessType,
     revenue,
@@ -148,9 +185,10 @@ function buildCashProjection(
   profile: BusinessProfile,
   adjustments?: FinancialAdjustments | null,
   sales: Sale[] = [],
+  payables: Payable[] = [],
 ) {
   const today = new Date();
-  const base = buildMovements(profile, today, adjustments, sales);
+  const base = buildMovements(profile, today, adjustments, sales, payables);
   let balance = base.initialBalance;
   let minimumBalance = balance;
   let negativeDate: Date | null = null;
@@ -186,8 +224,25 @@ function buildCashProjection(
     )} em 30 dias.`,
     tone: "primary" as AlertTone,
   };
+  const overduePayables = payables.filter(
+    (payable) => payable.status !== "cancelado" &&
+      payable.status !== "pago" &&
+      payable.dueDate < today.toISOString().slice(0, 10),
+  );
+  const overdueTotal = overduePayables.reduce(
+    (total, payable) => total + payable.amount,
+    0,
+  );
 
-  if (projected30 < 0 || negativeDate) {
+  if (overdueTotal > 0) {
+    alert = {
+      title: "Contas atrasadas",
+      description: `Ha ${formatCurrency(
+        overdueTotal,
+      )} em contas vencidas. Regularize ou renegocie antes de assumir novas saidas.`,
+      tone: "risk",
+    };
+  } else if (projected30 < 0 || negativeDate) {
     alert = {
       title: "Risco financeiro: caixa negativo",
       description: negativeDate
@@ -218,6 +273,7 @@ function buildCashProjection(
     negativeDate,
     lowCashLimit,
     alert,
+    overduePayables,
   };
 }
 
@@ -249,10 +305,25 @@ function readFinancialAdjustments() {
   }
 }
 
+function readPayables() {
+  const storedPayables = localStorage.getItem(PAYABLES_STORAGE_KEY);
+
+  if (!storedPayables) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(storedPayables) as Payable[];
+  } catch {
+    return [];
+  }
+}
+
 export default function FluxoDeCaixaPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [payables, setPayables] = useState<Payable[]>([]);
   const [hasLoadedProfile, setHasLoadedProfile] = useState(false);
 
   useEffect(() => {
@@ -268,12 +339,13 @@ export default function FluxoDeCaixaPage() {
 
     setAdjustments(readFinancialAdjustments());
     setSales(readSales());
+    setPayables(readPayables());
     setHasLoadedProfile(true);
   }, []);
 
   const projection = useMemo(
-    () => (profile ? buildCashProjection(profile, adjustments, sales) : null),
-    [profile, adjustments, sales],
+    () => (profile ? buildCashProjection(profile, adjustments, sales, payables) : null),
+    [profile, adjustments, sales, payables],
   );
 
   if (!hasLoadedProfile) {

@@ -8,6 +8,7 @@ import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
   FinancialAdjustments,
+  Payable,
   Sale,
   calculateDre,
   generateRestaurantInsights,
@@ -17,6 +18,7 @@ import { formatCurrency, formatPercent } from "@/lib/formatters";
 import {
   BUSINESS_PROFILE_STORAGE_KEY,
   FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
+  PAYABLES_STORAGE_KEY,
   SALES_STORAGE_KEY,
 } from "@/lib/storage-keys";
 
@@ -52,12 +54,27 @@ function readFinancialAdjustments() {
   }
 }
 
+function readPayables() {
+  const storedPayables = localStorage.getItem(PAYABLES_STORAGE_KEY);
+
+  if (!storedPayables) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(storedPayables) as Payable[];
+  } catch {
+    return [];
+  }
+}
+
 function createAdjustmentValues(
   profile: BusinessProfile,
   adjustments?: FinancialAdjustments | null,
   sales: Sale[] = [],
+  payables: Payable[] = [],
 ) {
-  const dre = calculateDre(profile, adjustments, sales);
+  const dre = calculateDre(profile, adjustments, sales, payables);
 
   return {
     revenue: Math.round(dre.revenue),
@@ -76,6 +93,7 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [payables, setPayables] = useState<Payable[]>([]);
   const [formValues, setFormValues] = useState<Omit<FinancialAdjustments, "updatedAt"> | null>(
     null,
   );
@@ -95,12 +113,13 @@ export default function DashboardPage() {
 
     setAdjustments(readFinancialAdjustments());
     setSales(readSales());
+    setPayables(readPayables());
     setHasLoadedProfile(true);
   }, []);
 
   const dashboard = useMemo(
-    () => (profile ? calculateDre(profile, adjustments, sales) : null),
-    [profile, adjustments, sales],
+    () => (profile ? calculateDre(profile, adjustments, sales, payables) : null),
+    [profile, adjustments, sales, payables],
   );
   const restaurantInsights = useMemo(
     () => generateRestaurantInsights(sales, getTodayValue()).slice(0, 3),
@@ -112,7 +131,7 @@ export default function DashboardPage() {
       return;
     }
 
-    setFormValues(createAdjustmentValues(profile, adjustments, sales));
+    setFormValues(createAdjustmentValues(profile, adjustments, sales, payables));
     setIsAdjustPanelOpen(true);
   }
 
@@ -396,6 +415,33 @@ export default function DashboardPage() {
           ))}
         </div>
       </section>
+
+      {dashboard.payableBuckets.hasPayables ? (
+        <section className="rounded-2xl border border-norteia-line bg-norteia-card p-5 shadow-soft">
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-primary">
+            Despesas reais por categoria
+          </p>
+          <p className="mt-2 text-sm leading-6 text-norteia-muted">
+            O DRE deste mes esta usando contas a pagar previstas ou pagas como
+            base real quando existem lancamentos.
+          </p>
+          <div className="mt-4 space-y-3">
+            {Object.entries(dashboard.payableBuckets.byCategory).map(
+              ([category, amount]) => (
+                <div
+                  key={category}
+                  className="flex items-center justify-between gap-4 border-b border-norteia-line pb-3 last:border-b-0 last:pb-0"
+                >
+                  <span className="text-sm text-norteia-muted">{category}</span>
+                  <strong className="text-right text-sm font-bold text-norteia-text">
+                    {formatCurrency(amount ?? 0)}
+                  </strong>
+                </div>
+              ),
+            )}
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-2xl border border-norteia-alert/35 bg-norteia-alert/10 p-5 shadow-soft">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-alert">
