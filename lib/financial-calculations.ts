@@ -20,6 +20,15 @@ export type FinancialRules = {
   idealDirectCost: number;
 };
 
+export type FinancialAdjustments = {
+  revenue: number;
+  directCost: number;
+  fixedExpenses: number;
+  taxes: number;
+  cashBalance: number;
+  updatedAt?: string;
+};
+
 export const financialRulesByBusinessType: Record<BusinessType, FinancialRules> = {
   Comercio: {
     directCost: 0.55,
@@ -110,13 +119,17 @@ export function calculateMissedMoney(revenue: number, directCost: number, idealR
   return Math.max(directCost - revenue * idealRate, 0);
 }
 
-export function calculateDre(profile: BusinessProfile) {
+export function calculateDre(
+  profile: BusinessProfile,
+  adjustments?: FinancialAdjustments | null,
+) {
   const businessType = normalizeBusinessType(profile.businessType);
   const rules = financialRulesByBusinessType[businessType];
-  const revenue = getEstimatedRevenue(profile.monthlyRevenue);
-  const directCost = revenue * rules.directCost;
-  const fixedExpenses = revenue * rules.fixedExpenses;
-  const taxes = revenue * rules.taxes;
+  const estimatedRevenue = getEstimatedRevenue(profile.monthlyRevenue);
+  const revenue = adjustments?.revenue ?? estimatedRevenue;
+  const directCost = adjustments?.directCost ?? revenue * rules.directCost;
+  const fixedExpenses = adjustments?.fixedExpenses ?? revenue * rules.fixedExpenses;
+  const taxes = adjustments?.taxes ?? revenue * rules.taxes;
   const profit = revenue - directCost - fixedExpenses - taxes;
   const netMargin = calculateMargin(profit, revenue);
   const directCostPercent = calculateMargin(directCost, revenue);

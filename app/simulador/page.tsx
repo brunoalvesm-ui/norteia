@@ -7,11 +7,15 @@ import { MetricCard } from "@/components/metric-card";
 import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
+  FinancialAdjustments,
   calculateDre,
   calculateMargin,
 } from "@/lib/financial-calculations";
 import { formatCurrency, formatPercent } from "@/lib/formatters";
-import { BUSINESS_PROFILE_STORAGE_KEY } from "@/lib/storage-keys";
+import {
+  BUSINESS_PROFILE_STORAGE_KEY,
+  FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
+} from "@/lib/storage-keys";
 
 type SimulationMode = "price" | "cost" | "revenue";
 type AlertTone = "support" | "alert" | "risk" | "primary";
@@ -42,8 +46,11 @@ const simulationModes: Array<{
   },
 ];
 
-function buildCurrentScenario(profile: BusinessProfile) {
-  const dre = calculateDre(profile);
+function buildCurrentScenario(
+  profile: BusinessProfile,
+  adjustments?: FinancialAdjustments | null,
+) {
+  const dre = calculateDre(profile, adjustments);
 
   return {
     businessType: dre.businessType,
@@ -54,6 +61,9 @@ function buildCurrentScenario(profile: BusinessProfile) {
     profit: dre.profit,
     margin: dre.netMargin,
     rules: dre.rules,
+    dataSourceLabel: adjustments
+      ? "Numeros ajustados por voce"
+      : "Estimativa inicial",
   };
 }
 
@@ -77,7 +87,7 @@ function buildSimulatedScenario(
       margin: calculateMargin(profit, revenue),
       insight: `Com aumento de ${percentage}% no preco, seu lucro pode subir ${formatCurrency(
         profit - current.profit,
-      )}/mes.`,
+      )}/mes e chegar a ${formatCurrency(profit)}/mes.`,
     };
   }
 
@@ -94,7 +104,7 @@ function buildSimulatedScenario(
       margin: calculateMargin(profit, current.revenue),
       insight: `Reduzir custos em ${percentage}% pode liberar ${formatCurrency(
         current.directCost - directCost,
-      )}/mes de lucro.`,
+      )}/mes de lucro. Seu custo direto cairia para ${formatCurrency(directCost)}/mes.`,
     };
   }
 
@@ -112,7 +122,7 @@ function buildSimulatedScenario(
     margin: calculateMargin(profit, revenue),
     insight: `Se seu faturamento crescer ${percentage}%, seu lucro estimado pode chegar a ${formatCurrency(
       profit,
-    )}/mes.`,
+    )}/mes, contra ${formatCurrency(current.profit)}/mes hoje.`,
   };
 }
 
@@ -125,7 +135,7 @@ function buildStrategicAlert(
     return {
       title: "Reducao exige plano",
       description:
-        "Cortar mais de 10% dos custos pode ser potente, mas precisa de plano de acao para nao afetar operacao e qualidade.",
+        "Atencao: reduzir custos acima de 10% mexe no dinheiro do mes, mas precisa de plano para nao afetar entrega e qualidade.",
       tone: "alert" as AlertTone,
     };
   }
@@ -134,7 +144,7 @@ function buildStrategicAlert(
     return {
       title: "Crescer sem margem cobra caro",
       description:
-        "Aumentar faturamento com margem baixa pode nao resolver. Antes de vender mais, revise precos e custos.",
+        "Risco financeiro: vender mais com margem baixa pode aumentar trabalho sem sobrar dinheiro. Antes, revise preco e custo.",
       tone: "risk" as AlertTone,
     };
   }
@@ -142,7 +152,7 @@ function buildStrategicAlert(
   if (percentage <= 5) {
     return {
       title: "Cenario conservador",
-      description: "Boa opcao para testar impacto com baixo atrito comercial e operacional.",
+      description: "Oportunidade segura: pequeno ajuste para testar ganho de lucro sem grande atrito.",
       tone: "support" as AlertTone,
     };
   }
@@ -150,20 +160,35 @@ function buildStrategicAlert(
   if (percentage <= 12) {
     return {
       title: "Cenario viavel",
-      description: "Mudanca relevante, ainda plausivel para um primeiro plano de execucao.",
+      description: "Oportunidade viavel: ganho relevante, ainda plausivel para executar este mes.",
       tone: "primary" as AlertTone,
     };
   }
 
   return {
     title: "Cenario arrojado",
-    description: "Impacto alto. Use como meta, mas quebre em etapas menores para executar melhor.",
+    description: "Atencao: impacto alto. Use como meta financeira, mas divida em etapas menores.",
     tone: "alert" as AlertTone,
   };
 }
 
+function readFinancialAdjustments() {
+  const storedAdjustments = localStorage.getItem(FINANCIAL_ADJUSTMENTS_STORAGE_KEY);
+
+  if (!storedAdjustments) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(storedAdjustments) as FinancialAdjustments;
+  } catch {
+    return null;
+  }
+}
+
 export default function SimuladorPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
+  const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
   const [hasLoadedProfile, setHasLoadedProfile] = useState(false);
   const [mode, setMode] = useState<SimulationMode>("price");
   const [percentage, setPercentage] = useState(10);
@@ -179,13 +204,14 @@ export default function SimuladorPage() {
       }
     }
 
+    setAdjustments(readFinancialAdjustments());
     setHasLoadedProfile(true);
   }, []);
 
   const activeMode = simulationModes.find((item) => item.id === mode) ?? simulationModes[0];
   const current = useMemo(
-    () => (profile ? buildCurrentScenario(profile) : null),
-    [profile],
+    () => (profile ? buildCurrentScenario(profile, adjustments) : null),
+    [profile, adjustments],
   );
   const simulated = useMemo(
     () => (current ? buildSimulatedScenario(current, mode, percentage) : null),
@@ -242,8 +268,18 @@ export default function SimuladorPage() {
     <PageShell
       eyebrow="Simulador"
       title="Teste decisoes antes de agir"
-      description={`Cenarios estimados para um negocio de ${current.businessType}.`}
+      description={`Cenarios em dinheiro para um negocio de ${current.businessType}.`}
     >
+      <AlertCard
+        title={current.dataSourceLabel}
+        description={
+          adjustments
+            ? "As simulacoes usam os numeros ajustados por voce no dashboard."
+            : "Esses numeros sao estimativas iniciais. Ajuste no dashboard para refletir sua realidade."
+        }
+        tone="support"
+      />
+
       <div className="grid gap-2 rounded-2xl border border-norteia-line bg-norteia-card p-2 shadow-soft">
         {simulationModes.map((item) => {
           const isActive = item.id === mode;

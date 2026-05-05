@@ -7,11 +7,15 @@ import { MetricCard } from "@/components/metric-card";
 import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
+  FinancialAdjustments,
   calculateDre,
   calculatePayrollEstimate,
 } from "@/lib/financial-calculations";
 import { formatCurrency, formatShortDate } from "@/lib/formatters";
-import { BUSINESS_PROFILE_STORAGE_KEY } from "@/lib/storage-keys";
+import {
+  BUSINESS_PROFILE_STORAGE_KEY,
+  FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
+} from "@/lib/storage-keys";
 
 type AlertTone = "support" | "alert" | "risk" | "primary";
 
@@ -30,11 +34,15 @@ function addDays(date: Date, days: number) {
   return nextDate;
 }
 
-function buildMovements(profile: BusinessProfile, today: Date) {
-  const dre = calculateDre(profile);
+function buildMovements(
+  profile: BusinessProfile,
+  today: Date,
+  adjustments?: FinancialAdjustments | null,
+) {
+  const dre = calculateDre(profile, adjustments);
   const { businessType, directCost, fixedExpenses, revenue, taxes } = dre;
   const payroll = calculatePayrollEstimate(revenue, profile.employees);
-  const initialBalance = revenue * 0.28;
+  const initialBalance = adjustments?.cashBalance ?? revenue * 0.28;
 
   const movements: CashMovement[] = [
     {
@@ -126,13 +134,19 @@ function buildMovements(profile: BusinessProfile, today: Date) {
     businessType,
     revenue,
     initialBalance,
+    dataSourceLabel: adjustments
+      ? "Numeros ajustados por voce"
+      : "Estimativa inicial",
     movements: movements.sort((a, b) => a.day - b.day),
   };
 }
 
-function buildCashProjection(profile: BusinessProfile) {
+function buildCashProjection(
+  profile: BusinessProfile,
+  adjustments?: FinancialAdjustments | null,
+) {
   const today = new Date();
-  const base = buildMovements(profile, today);
+  const base = buildMovements(profile, today, adjustments);
   let balance = base.initialBalance;
   let minimumBalance = balance;
   let negativeDate: Date | null = null;
@@ -163,23 +177,30 @@ function buildCashProjection(profile: BusinessProfile) {
 
   let alert = {
     title: "Caixa saudavel",
-    description: "Seu caixa esta saudavel para os proximos 30 dias.",
+    description: `Seu caixa esta saudavel: saldo projetado de ${formatCurrency(
+      projected30,
+    )} em 30 dias.`,
     tone: "primary" as AlertTone,
   };
 
   if (projected30 < 0 || negativeDate) {
     alert = {
-      title: "Risco de caixa negativo",
+      title: "Risco financeiro: caixa negativo",
       description: negativeDate
-        ? `Voce pode ficar sem caixa no dia ${formatShortDate(negativeDate)}.`
-        : "Seu saldo projetado fica negativo nos proximos 30 dias.",
+        ? `Voce pode ficar sem caixa no dia ${formatShortDate(
+            negativeDate,
+          )}. O menor saldo previsto e ${formatCurrency(minimumBalance)}.`
+        : `Seu saldo projetado fica negativo e pode chegar a ${formatCurrency(
+            minimumBalance,
+          )} nos proximos 30 dias.`,
       tone: "risk",
     };
   } else if (projected30 < lowCashLimit || minimumBalance < lowCashLimit) {
     alert = {
-      title: "Caixa apertado",
-      description:
-        "Seu caixa esta apertado. Evite novas saidas antes de confirmar entradas.",
+      title: "Atencao: caixa apertado",
+      description: `Seu menor saldo previsto e ${formatCurrency(
+        minimumBalance,
+      )}, abaixo de 10% da receita mensal. Evite novas saidas antes de confirmar entradas.`,
       tone: "alert",
     };
   }
@@ -196,8 +217,23 @@ function buildCashProjection(profile: BusinessProfile) {
   };
 }
 
+function readFinancialAdjustments() {
+  const storedAdjustments = localStorage.getItem(FINANCIAL_ADJUSTMENTS_STORAGE_KEY);
+
+  if (!storedAdjustments) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(storedAdjustments) as FinancialAdjustments;
+  } catch {
+    return null;
+  }
+}
+
 export default function FluxoDeCaixaPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
+  const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
   const [hasLoadedProfile, setHasLoadedProfile] = useState(false);
 
   useEffect(() => {
@@ -211,12 +247,13 @@ export default function FluxoDeCaixaPage() {
       }
     }
 
+    setAdjustments(readFinancialAdjustments());
     setHasLoadedProfile(true);
   }, []);
 
   const projection = useMemo(
-    () => (profile ? buildCashProjection(profile) : null),
-    [profile],
+    () => (profile ? buildCashProjection(profile, adjustments) : null),
+    [profile, adjustments],
   );
 
   if (!hasLoadedProfile) {
@@ -254,13 +291,23 @@ export default function FluxoDeCaixaPage() {
     <PageShell
       eyebrow="Fluxo de caixa"
       title="Previsao de 30 dias"
-      description={`Base estimada para um negocio de ${projection.businessType}.`}
+      description={`Entrada, saida e saldo para um negocio de ${projection.businessType}.`}
     >
+      <AlertCard
+        title={projection.dataSourceLabel}
+        description={
+          adjustments
+            ? "A previsao usa o saldo de caixa e os numeros ajustados por voce."
+            : "Esses numeros sao estimativas iniciais. Ajuste no dashboard para refletir sua realidade."
+        }
+        tone="support"
+      />
+
       <div className="grid grid-cols-2 gap-3">
         <MetricCard
           label="Saldo hoje"
           value={formatCurrency(projection.initialBalance)}
-          hint="Saldo inicial estimado"
+          hint={projection.dataSourceLabel}
         />
         <MetricCard
           label="Saldo em 30 dias"
@@ -283,7 +330,7 @@ export default function FluxoDeCaixaPage() {
         <MetricCard
           label="Receita base"
           value={formatCurrency(projection.revenue)}
-          hint="Faturamento estimado"
+          hint={projection.dataSourceLabel}
           tone="support"
         />
       </div>

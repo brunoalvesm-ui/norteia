@@ -8,12 +8,14 @@ import { MetricCard } from "@/components/metric-card";
 import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
+  FinancialAdjustments,
   calculateDre,
   calculatePayrollEstimate,
 } from "@/lib/financial-calculations";
 import { formatCurrency } from "@/lib/formatters";
 import {
   BUSINESS_PROFILE_STORAGE_KEY,
+  FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
   WEEKLY_ROUTINE_STORAGE_KEY,
 } from "@/lib/storage-keys";
 
@@ -79,12 +81,29 @@ function loadStoredRoutine() {
   }
 }
 
-function buildWeeklyObligations(profile: BusinessProfile) {
-  const dre = calculateDre(profile);
+function readFinancialAdjustments() {
+  const storedAdjustments = localStorage.getItem(FINANCIAL_ADJUSTMENTS_STORAGE_KEY);
+
+  if (!storedAdjustments) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(storedAdjustments) as FinancialAdjustments;
+  } catch {
+    return null;
+  }
+}
+
+function buildWeeklyObligations(
+  profile: BusinessProfile,
+  adjustments?: FinancialAdjustments | null,
+) {
+  const dre = calculateDre(profile, adjustments);
   const weeklyRevenue = dre.revenue / 4;
   const obligations = [
     {
-      label: "Impostos estimados",
+      label: "Impostos",
       value: weeklyRevenue * dre.rules.taxes,
     },
     {
@@ -108,25 +127,31 @@ function buildWeeklyObligations(profile: BusinessProfile) {
 
   return {
     businessType: dre.businessType,
+    dataSourceLabel: adjustments
+      ? "Numeros ajustados por voce"
+      : "Estimativa inicial",
     weeklyRevenue,
     obligations,
   };
 }
 
-function getWeeklyInsight(progressPercent: number) {
+function getWeeklyInsight(progressPercent: number, weeklyRevenue: number) {
   if (progressPercent <= 30) {
-    return "Voce ainda esta sem rotina de gestao. Comece pelo faturamento.";
+    return `Voce ainda esta sem rotina de gestao. Comece pelo faturamento: acompanhe os ${formatCurrency(
+      weeklyRevenue,
+    )} estimados da semana.`;
   }
 
   if (progressPercent <= 70) {
-    return "Boa evolucao. Agora complete os pontos que impactam caixa e lucro.";
+    return "Boa evolucao. Agora complete os pontos que mexem direto no caixa: custos, saldo e despesas fixas.";
   }
 
-  return "Excelente. Voce esta criando uma rotina de empresario que decide com dados.";
+  return "Excelente. Voce esta criando uma rotina de empresario que protege lucro e decide com dados.";
 }
 
 export default function RotinaPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
+  const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
   const [routine, setRoutine] = useState<RoutineItem[]>(routineTemplate);
   const [hasLoadedData, setHasLoadedData] = useState(false);
 
@@ -142,6 +167,7 @@ export default function RotinaPage() {
     }
 
     setRoutine(loadStoredRoutine());
+    setAdjustments(readFinancialAdjustments());
     setHasLoadedData(true);
   }, []);
 
@@ -151,10 +177,13 @@ export default function RotinaPage() {
   const nextBestAction = nextPendingItem
     ? `Proxima melhor acao: ${nextPendingItem.label}.`
     : "Proxima melhor acao: rode uma simulacao ou revise o dashboard.";
-  const weeklyInsight = getWeeklyInsight(progressPercent);
   const weeklyPlan = useMemo(
-    () => (profile ? buildWeeklyObligations(profile) : null),
-    [profile],
+    () => (profile ? buildWeeklyObligations(profile, adjustments) : null),
+    [profile, adjustments],
+  );
+  const weeklyInsight = getWeeklyInsight(
+    progressPercent,
+    weeklyPlan?.weeklyRevenue ?? 0,
   );
 
   function toggleRoutineItem(itemId: string) {
@@ -208,8 +237,18 @@ export default function RotinaPage() {
     <PageShell
       eyebrow="Rotina"
       title="Ritmo semanal"
-      description={`Checklist de gestao para um negocio de ${weeklyPlan.businessType}.`}
+      description={`Rotina para proteger o dinheiro de um negocio de ${weeklyPlan.businessType}.`}
     >
+      <AlertCard
+        title={weeklyPlan.dataSourceLabel}
+        description={
+          adjustments
+            ? "A rotina usa os numeros ajustados por voce para estimar as obrigacoes da semana."
+            : "Esses numeros sao estimativas iniciais. Ajuste no dashboard para refletir sua realidade."
+        }
+        tone="support"
+      />
+
       <div className="grid grid-cols-2 gap-3">
         <MetricCard
           label="Concluido"
