@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --font-title: var(--font-syne);
+  --font-sans: var(--font-dm-sans);
+  --color-norteia-bg: #0d0f14;
+  --color-norteia-card: #161922;
+  --color-norteia-card-2: #1e2230;
+  --color-norteia-primary: #00e5a0;
+  --color-norteia-support: #4d9fff;
+  --color-norteia-alert: #f5a623;
+  --color-norteia-risk: #ff4d6a;
+  --color-norteia-text: #f7fbff;
+  --color-norteia-muted: #9da7b8;
+  --color-norteia-line: rgba(255, 255, 255, 0.1);
+  --shadow-soft: 0 22px 70px rgba(0, 0, 0, 0.42);
+  --shadow-glow: 0 0 36px rgba(0, 229, 160, 0.16);
+}
+
+:root {
+  color-scheme: dark;
+  background: #0d0f14;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(0, 229, 160, 0.14), transparent 30rem),
+    radial-gradient(circle at top right, rgba(77, 159, 255, 0.12), transparent 28rem),
+    #0d0f14;
+  color: #f7fbff;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(0, 229, 160, 0.28);
+  color: #f7fbff;
+}
