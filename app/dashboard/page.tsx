@@ -1,613 +1,343 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ActionButton } from "@/components/action-button";
-import { AlertCard } from "@/components/alert-card";
-import { MetricCard } from "@/components/metric-card";
-import { PageShell } from "@/components/page-shell";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
-  BusinessProfile,
-  FinancialAdjustments,
-  Sale,
-  calculateDre,
-  generateRestaurantInsights,
-  normalizeText,
-} from "@/lib/financial-calculations";
-import { formatCurrency, formatPercent } from "@/lib/formatters";
-import {
-  BUSINESS_PROFILE_STORAGE_KEY,
-  FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
-  SALES_STORAGE_KEY,
-} from "@/lib/storage-keys";
+  useOnboarding,
+  TipoNegocio,
+  FaixaFaturamento,
+  QtdFuncionarios,
+  ConheceLucro,
+  RegimeTributario,
+  calcularDiagnostico,
+} from "@/context/OnboardingContext";
 
-type AlertTone = "support" | "alert" | "risk" | "primary";
-type OpportunityTone = "primary" | "alert" | "risk";
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-function knowsNothing(value?: string) {
-  return normalizeText(value) === "nao sei";
+function fmt(n: number) {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 }
 
-function buildDashboard(
-  profile: BusinessProfile,
-  adjustments?: FinancialAdjustments | null,
-  sales: Sale[] = [],
-) {
-  const dre = calculateDre(profile, adjustments, sales);
-  const hasHighCost = dre.directCostPercent > dre.rules.idealDirectCost;
-  const hasLowMargin = dre.netMargin < 0.1;
-  const targetMargin = 0.15;
-  const costGain = dre.missedMoney;
-  const marginGain = Math.max(dre.revenue * targetMargin - dre.profit, 0);
-  const priceGain = dre.netMargin < targetMargin ? dre.revenue * 0.05 : 0;
-  const bestOpportunity = Math.max(costGain, marginGain, priceGain);
-  const opportunityTone: OpportunityTone = hasLowMargin
-    ? "risk"
-    : hasHighCost
-      ? "alert"
-      : "primary";
-  const opportunityAction = hasHighCost
-    ? "Comece revisando seus 3 maiores custos."
-    : hasLowMargin
-      ? "Revise preco, custo e despesas fixas."
-      : "Agora o foco e manter rotina e previsibilidade de caixa.";
-  const dataSourceLabel = adjustments
-    ? "Numeros ajustados por voce"
-    : "Estimativa inicial";
+// ── Sub-componentes ──────────────────────────────────────────────────────────
 
-  const alerts: Array<{
-    title: string;
-    description: string;
-    tone: AlertTone;
-  }> = [];
-
-  if (hasLowMargin) {
-    alerts.push({
-      title: "Risco financeiro: lucro baixo",
-      description: `Seu lucro mensal e de ${formatCurrency(
-        dre.profit,
-      )}/mes, uma margem de ${formatPercent(
-        dre.netMargin,
-      )}. Esse numero precisa subir para o negocio respirar melhor.`,
-      tone: "risk",
-    });
-  }
-
-  if (hasHighCost) {
-    alerts.push({
-      title: "Atencao: custo consumindo caixa",
-      description: `Seu custo direto esta consumindo ${formatCurrency(
-        dre.directCost,
-      )}/mes, ou ${formatPercent(
-        dre.directCostPercent,
-      )} da receita. Se reduzir para o nivel ideal, pode liberar ${formatCurrency(
-        dre.missedMoney,
-      )}/mes de lucro.`,
-      tone:
-        dre.directCostPercent - dre.rules.idealDirectCost > 0.08
-          ? "risk"
-          : "alert",
-    });
-  }
-
-  if (knowsNothing(profile.knowsProfit)) {
-    alerts.push({
-      title: "Educacao: lucro real ainda incerto",
-      description: `Hoje o Norteia calcula ${formatCurrency(
-        dre.profit,
-      )}/mes de lucro. Ajuste seus numeros para confirmar se esse dinheiro realmente sobra no caixa.`,
-      tone: "support",
-    });
-  }
-
-  if (knowsNothing(profile.knowsMainCost)) {
-    alerts.push({
-      title: "Educacao: custo principal precisa aparecer",
-      description: `O custo direto atual e ${formatCurrency(
-        dre.directCost,
-      )}/mes. Mapear esse valor mostra onde voce pode parar de perder margem.`,
-      tone: "support",
-    });
-  }
-
-  if (alerts.length === 0) {
-    alerts.push({
-      title: "Cenario saudavel",
-      description: `Seu lucro mensal e ${formatCurrency(
-        dre.profit,
-      )}/mes, com margem de ${formatPercent(
-        dre.netMargin,
-      )}. Agora o foco e proteger esse resultado com previsibilidade de caixa.`,
-      tone: "primary",
-    });
-  }
-
-  const nextAction = hasHighCost
-    ? `Mapeie seus principais custos. Ha ${formatCurrency(
-        dre.missedMoney,
-      )}/mes em possivel lucro para recuperar.`
-    : hasLowMargin
-      ? `Revise precos e despesas fixas. Seu lucro mensal esta em ${formatCurrency(
-          dre.profit,
-        )}.`
-      : `Agora o foco e previsibilidade de caixa para proteger ${formatCurrency(
-          dre.profit,
-        )}/mes de lucro.`;
-
-  return {
-    ...dre,
-    alerts,
-    dataSourceLabel,
-    nextAction,
-    opportunity: {
-      bestOpportunity,
-      costGain,
-      marginGain,
-      priceGain,
-      targetMargin,
-      tone: opportunityTone,
-      action: opportunityAction,
-    },
-  };
-}
-
-function createAdjustmentValues(
-  profile: BusinessProfile,
-  adjustments?: FinancialAdjustments | null,
-) {
-  const dre = calculateDre(profile, adjustments);
-
-  return {
-    revenue: Math.round(dre.revenue),
-    directCost: Math.round(dre.directCost),
-    fixedExpenses: Math.round(dre.fixedExpenses),
-    taxes: Math.round(dre.taxes),
-    cashBalance: Math.round(adjustments?.cashBalance ?? dre.revenue * 0.28),
-  };
-}
-
-function readSales() {
-  const storedSales = localStorage.getItem(SALES_STORAGE_KEY);
-
-  if (!storedSales) {
-    return [];
-  }
-
-  try {
-    return JSON.parse(storedSales) as Sale[];
-  } catch {
-    return [];
-  }
-}
-
-function getTodayValue() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function readFinancialAdjustments() {
-  const storedAdjustments = localStorage.getItem(FINANCIAL_ADJUSTMENTS_STORAGE_KEY);
-
-  if (!storedAdjustments) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(storedAdjustments) as FinancialAdjustments;
-  } catch {
-    return null;
-  }
-}
-
-export default function DashboardPage() {
-  const [profile, setProfile] = useState<BusinessProfile | null>(null);
-  const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [formValues, setFormValues] = useState<Omit<FinancialAdjustments, "updatedAt"> | null>(
-    null,
-  );
-  const [hasLoadedProfile, setHasLoadedProfile] = useState(false);
-  const [isAdjustPanelOpen, setIsAdjustPanelOpen] = useState(false);
-
-  useEffect(() => {
-    const storedProfile = localStorage.getItem(BUSINESS_PROFILE_STORAGE_KEY);
-
-    if (storedProfile) {
-      try {
-        setProfile(JSON.parse(storedProfile) as BusinessProfile);
-      } catch {
-        setProfile(null);
-      }
-    }
-
-    setAdjustments(readFinancialAdjustments());
-    setSales(readSales());
-
-    setHasLoadedProfile(true);
-  }, []);
-
-  const dashboard = useMemo(
-    () => (profile ? buildDashboard(profile, adjustments, sales) : null),
-    [profile, adjustments, sales],
-  );
-
-  function openAdjustPanel() {
-    if (!profile) {
-      return;
-    }
-
-    setFormValues(createAdjustmentValues(profile, adjustments));
-    setIsAdjustPanelOpen(true);
-  }
-
-  function updateFormValue(field: keyof Omit<FinancialAdjustments, "updatedAt">, value: string) {
-    setFormValues((currentValues) => {
-      if (!currentValues) {
-        return currentValues;
-      }
-
-      return {
-        ...currentValues,
-        [field]: Number(value),
-      };
-    });
-  }
-
-  function saveAdjustments() {
-    if (!formValues) {
-      return;
-    }
-
-    const nextAdjustments = {
-      ...formValues,
-      updatedAt: new Date().toISOString(),
-    };
-
-    localStorage.setItem(
-      FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
-      JSON.stringify(nextAdjustments),
-    );
-    setAdjustments(nextAdjustments);
-    setIsAdjustPanelOpen(false);
-  }
-
-  if (!hasLoadedProfile) {
-    return (
-      <PageShell
-        eyebrow="Dashboard"
-        title="Carregando"
-        description="Preparando seu diagnostico inicial."
-      >
-        <div className="rounded-2xl border border-norteia-line bg-norteia-card p-5 text-sm text-norteia-muted shadow-soft">
-          Buscando dados do onboarding...
-        </div>
-      </PageShell>
-    );
-  }
-
-  if (!profile || !dashboard) {
-    return (
-      <PageShell
-        eyebrow="Dashboard"
-        title="Complete seu perfil"
-        description="O dashboard dinamico depende das respostas iniciais do onboarding."
-      >
-        <AlertCard
-          title="Perfil nao encontrado"
-          description="Responda o onboarding para gerar seu primeiro diagnostico financeiro."
-          tone="alert"
-        />
-        <ActionButton href="/onboarding">Ir para onboarding</ActionButton>
-      </PageShell>
-    );
-  }
-
-  const dreRows: Array<[string, number]> = [
-    ["Receita mensal", dashboard.revenue],
-    ["Custo direto", -dashboard.directCost],
-    ["Despesas fixas", -dashboard.fixedExpenses],
-    ["Impostos", -dashboard.taxes],
-    ["Lucro mensal", dashboard.profit],
-  ];
-  const opportunityStyles: Record<OpportunityTone, string> = {
-    primary:
-      "border-norteia-primary/35 bg-norteia-primary/10 text-norteia-primary",
-    alert: "border-norteia-alert/35 bg-norteia-alert/10 text-norteia-alert",
-    risk: "border-norteia-risk/35 bg-norteia-risk/10 text-norteia-risk",
-  };
-  const restaurantInsights = generateRestaurantInsights(sales, getTodayValue()).slice(
-    0,
-    3,
-  );
-
+function ProgressBar({ step, total }: { step: number; total: number }) {
   return (
-    <PageShell
-      eyebrow="Dashboard"
-      title={`Visao inicial: ${dashboard.businessType}`}
-      description="Estimativas geradas a partir do perfil salvo no onboarding."
-    >
-      <button
-        type="button"
-        onClick={openAdjustPanel}
-        className="inline-flex h-12 items-center justify-center rounded-2xl bg-norteia-primary px-5 text-sm font-bold text-norteia-bg shadow-glow transition"
-      >
-        Ajustar meus numeros
-      </button>
-
-      {isAdjustPanelOpen && formValues ? (
-        <div className="fixed inset-0 z-[60] flex items-end bg-norteia-bg/78 px-4 pb-4 pt-10 backdrop-blur-sm sm:items-center sm:justify-center">
-          <section className="w-full max-w-md rounded-3xl border border-norteia-line bg-norteia-card p-5 shadow-soft">
-            <div className="mb-5">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-primary">
-                Ajustes financeiros
-              </p>
-              <h2 className="mt-2 font-title text-2xl font-bold text-norteia-text">
-                Ajustar meus numeros
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-norteia-muted">
-                Informe os valores mensais que representam melhor o momento atual.
-              </p>
-            </div>
-
-            <div className="grid gap-3">
-              {[
-                ["revenue", "Faturamento mensal"],
-                ["directCost", "Custo direto / custo principal"],
-                ["fixedExpenses", "Despesas fixas"],
-                ["taxes", "Impostos"],
-                ["cashBalance", "Saldo de caixa atual"],
-              ].map(([field, label]) => (
-                <label key={field} className="grid gap-2">
-                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-norteia-muted">
-                    {label}
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={formValues[field as keyof typeof formValues]}
-                    onChange={(event) =>
-                      updateFormValue(
-                        field as keyof Omit<FinancialAdjustments, "updatedAt">,
-                        event.target.value,
-                      )
-                    }
-                    className="h-12 rounded-2xl border border-norteia-line bg-norteia-card-2 px-4 text-sm font-bold text-norteia-text outline-none transition focus:border-norteia-primary"
-                  />
-                </label>
-              ))}
-            </div>
-
-            <div className="mt-5 grid grid-cols-[0.8fr_1.2fr] gap-3">
-              <button
-                type="button"
-                onClick={() => setIsAdjustPanelOpen(false)}
-                className="h-12 rounded-2xl border border-norteia-line bg-norteia-card-2 px-4 text-sm font-bold text-norteia-text transition"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={saveAdjustments}
-                className="h-12 rounded-2xl bg-norteia-primary px-4 text-sm font-bold text-norteia-bg shadow-glow transition"
-              >
-                Salvar ajustes
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      <div className="grid grid-cols-2 gap-3">
-        <MetricCard
-          label="Receita"
-          value={formatCurrency(dashboard.revenue)}
-          hint={dashboard.dataSourceLabel}
-        />
-        <MetricCard
-          label="Lucro"
-          value={formatCurrency(dashboard.profit)}
-          hint={`${formatPercent(dashboard.netMargin)}% de margem liquida`}
-          tone={dashboard.netMargin < 0.1 ? "risk" : "support"}
-        />
-        <MetricCard
-          label="Custo direto"
-          value={`${formatPercent(dashboard.directCostPercent)}%`}
-          hint={formatCurrency(dashboard.directCost)}
-          tone="alert"
-        />
-        <MetricCard
-          label="Equipe"
-          value={profile.employees ?? "-"}
-          hint="Informado no onboarding"
-          tone="support"
+    <div className="w-full mb-6">
+      <div className="flex justify-between text-xs text-gray-400 mb-1">
+        <span>Etapa {step} de {total}</span>
+        <span>{Math.round((step / total) * 100)}%</span>
+      </div>
+      <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+          style={{ width: `${(step / total) * 100}%` }}
         />
       </div>
+    </div>
+  );
+}
 
+function OptionCard({
+  selected,
+  onClick,
+  icon,
+  label,
+  sub,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  icon: string;
+  label: string;
+  sub?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left p-4 rounded-xl border transition-all ${
+        selected
+          ? "border-emerald-500 bg-emerald-500/10 text-white"
+          : "border-gray-700 bg-gray-800/50 text-gray-300 hover:border-gray-500"
+      }`}
+    >
+      <span className="text-2xl mr-3">{icon}</span>
+      <span className="font-medium">{label}</span>
+      {sub && <p className="text-xs text-gray-400 mt-1 ml-9">{sub}</p>}
+    </button>
+  );
+}
+
+// ── Página principal ─────────────────────────────────────────────────────────
+
+export default function OnboardingPage() {
+  const { data, setField, concluir } = useOnboarding();
+  const router = useRouter();
+  const [step, setStep] = useState(1);
+  const TOTAL = 5;
+
+  function next() { setStep(s => Math.min(s + 1, TOTAL + 1)); }
+  function back() { setStep(s => Math.max(s - 1, 1)); }
+
+  function finalizar() {
+    concluir();
+    router.push("/dashboard");
+  }
+
+  // ── Etapa 1 — Tipo de negócio ──────────────────────────────────────────────
+  if (step === 1) return (
+    <Screen>
+      <ProgressBar step={1} total={TOTAL} />
+      <h1 className="text-2xl font-bold text-white mb-1">Qual é o seu negócio?</h1>
+      <p className="text-sm text-gray-400 mb-6">Isso personaliza seus diagnósticos.</p>
       <div className="space-y-3">
-        {dashboard.alerts.map((alert) => (
-          <AlertCard
-            key={alert.title}
-            title={alert.title}
-            description={alert.description}
-            tone={alert.tone}
+        {([
+          ["comercio",  "🛒", "Comércio",   "Loja, mercado, distribuidora"],
+          ["servico",   "🔧", "Serviço",    "Oficina, clínica, consultoria"],
+          ["industria", "🏭", "Indústria",  "Fabricação, produção"],
+          ["outro",     "💼", "Outro",      "Alimentação, tech, outros"],
+        ] as [TipoNegocio, string, string, string][]).map(([val, icon, label, sub]) => (
+          <OptionCard
+            key={val}
+            selected={data.tipo === val}
+            onClick={() => setField("tipo", val)}
+            icon={icon}
+            label={label}
+            sub={sub}
           />
         ))}
       </div>
+      <NavButtons onNext={next} nextDisabled={!data.tipo} showBack={false} />
+    </Screen>
+  );
 
-      <section className="space-y-3">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-primary">
-            Restaurante hoje
-          </p>
-          <h2 className="mt-2 font-title text-xl font-bold text-norteia-text">
-            Gatilhos inteligentes
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-norteia-muted">
-            Resumo pratico das vendas fechadas hoje em Mesas.
-          </p>
-        </div>
+  // ── Etapa 2 — Faturamento ──────────────────────────────────────────────────
+  if (step === 2) return (
+    <Screen>
+      <ProgressBar step={2} total={TOTAL} />
+      <h1 className="text-2xl font-bold text-white mb-1">Qual é seu faturamento mensal?</h1>
+      <p className="text-sm text-gray-400 mb-6">Estimativa está ótimo.</p>
+      <div className="space-y-3">
+        {([
+          ["ate20",   "≤ R$ 20 mil",         "Negócio em crescimento inicial"],
+          ["20a50",   "R$ 20 mil a R$ 50 mil", "Porte pequeno consolidado"],
+          ["50a100",  "R$ 50 mil a R$ 100 mil","Porte médio-pequeno"],
+          ["100mais", "Acima de R$ 100 mil",   "Porte médio"],
+        ] as [FaixaFaturamento, string, string][]).map(([val, label, sub]) => (
+          <OptionCard
+            key={val}
+            selected={data.faturamento === val}
+            onClick={() => setField("faturamento", val)}
+            icon={val === "ate20" ? "💰" : val === "20a50" ? "💵" : val === "50a100" ? "📈" : "🏦"}
+            label={label}
+            sub={sub}
+          />
+        ))}
+      </div>
+      <NavButtons onNext={next} onBack={back} nextDisabled={!data.faturamento} />
+    </Screen>
+  );
 
-        <div className="space-y-3">
-          {restaurantInsights.map((insight) => (
-            <AlertCard
-              key={`${insight.title}-${insight.description}`}
-              title={insight.title}
-              description={insight.description}
-              tone={insight.tone}
-            />
-          ))}
-        </div>
-      </section>
+  // ── Etapa 3 — Funcionários ─────────────────────────────────────────────────
+  if (step === 3) return (
+    <Screen>
+      <ProgressBar step={3} total={TOTAL} />
+      <h1 className="text-2xl font-bold text-white mb-1">Você tem funcionários?</h1>
+      <p className="text-sm text-gray-400 mb-6">Impacta no cálculo do seu custo real.</p>
+      <div className="space-y-3">
+        {([
+          ["nenhum", "👤", "Só eu",        "Sem CLT ou terceiros fixos"],
+          ["1a3",    "👥", "1 a 3",         "Equipe pequena"],
+          ["4a10",   "👨‍👩‍👧‍👦", "4 a 10",        "Equipe em crescimento"],
+          ["mais10", "🏢", "Mais de 10",   "Empresa estruturada"],
+        ] as [QtdFuncionarios, string, string, string][]).map(([val, icon, label, sub]) => (
+          <OptionCard
+            key={val}
+            selected={data.funcionarios === val}
+            onClick={() => setField("funcionarios", val)}
+            icon={icon}
+            label={label}
+            sub={sub}
+          />
+        ))}
+      </div>
+      <NavButtons onNext={next} onBack={back} nextDisabled={!data.funcionarios} />
+    </Screen>
+  );
 
-      <section
-        className={`rounded-2xl border p-5 shadow-soft ${
-          opportunityStyles[dashboard.opportunity.tone]
-        }`}
-      >
-        <p className="text-xs font-bold uppercase tracking-[0.16em]">
-          Oportunidade de ganho
+  // ── Etapa 4 — Conhece o lucro ──────────────────────────────────────────────
+  if (step === 4) return (
+    <Screen>
+      <ProgressBar step={4} total={TOTAL} />
+      <h1 className="text-2xl font-bold text-white mb-1">Você sabe seu lucro hoje?</h1>
+      <p className="text-sm text-gray-400 mb-6">Seja honesto — isso é para te ajudar.</p>
+      <div className="space-y-3">
+        {([
+          ["sim",            "✅", "Sim, sei com precisão",            "Tenho controle financeiro claro"],
+          ["mais_ou_menos",  "🤔", "Tenho uma ideia, mais ou menos",   "Sinto que estou lucrando, mas não sei exato"],
+          ["nao",            "😅", "Honestamente, não sei",            "Misturo pessoal e empresa, não controlo bem"],
+        ] as [ConheceLucro, string, string, string][]).map(([val, icon, label, sub]) => (
+          <OptionCard
+            key={val}
+            selected={data.conheceLucro === val}
+            onClick={() => setField("conheceLucro", val)}
+            icon={icon}
+            label={label}
+            sub={sub}
+          />
+        ))}
+      </div>
+      <NavButtons onNext={next} onBack={back} nextDisabled={!data.conheceLucro} />
+    </Screen>
+  );
+
+  // ── Etapa 5 — Regime tributário ────────────────────────────────────────────
+  if (step === 5) return (
+    <Screen>
+      <ProgressBar step={5} total={TOTAL} />
+      <h1 className="text-2xl font-bold text-white mb-1">Qual seu regime tributário?</h1>
+      <p className="text-sm text-gray-400 mb-6">Se não souber, selecione "Não sei" — estimaremos.</p>
+      <div className="space-y-3">
+        {([
+          ["mei",             "🪪", "MEI",                "Fatura até R$ 81 mil/ano"],
+          ["simples",         "📋", "Simples Nacional",   "Mais comum para pequenas empresas"],
+          ["lucro_presumido", "🏛️", "Lucro Presumido",    "Empresas maiores ou profissões regulamentadas"],
+          ["nao_sei",         "❓", "Não sei",             "Vamos estimar pelo Simples Nacional"],
+        ] as [RegimeTributario, string, string, string][]).map(([val, icon, label, sub]) => (
+          <OptionCard
+            key={val}
+            selected={data.regime === val}
+            onClick={() => setField("regime", val)}
+            icon={icon}
+            label={label}
+            sub={sub}
+          />
+        ))}
+      </div>
+      <NavButtons onNext={next} onBack={back} nextDisabled={!data.regime} nextLabel="Ver diagnóstico 🔍" />
+    </Screen>
+  );
+
+  // ── Etapa 6 — Diagnóstico final ────────────────────────────────────────────
+  const diag = calcularDiagnostico(data);
+
+  return (
+    <Screen>
+      <div className="text-center mb-6">
+        <div className="text-5xl mb-3">🔍</div>
+        <h1 className="text-2xl font-bold text-white">Seu diagnóstico inicial</h1>
+        <p className="text-sm text-gray-400 mt-1">
+          Baseado no perfil:{" "}
+          <span className="text-emerald-400 font-medium capitalize">{data.tipo}</span>
+          {" · "}
+          <span className="text-emerald-400 font-medium">{data.regime?.replace("_", " ")}</span>
         </p>
-        <h2 className="mt-3 font-title text-3xl font-bold text-norteia-text">
-          {formatCurrency(dashboard.opportunity.bestOpportunity)}/mes
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-norteia-text/78">
-          Voce pode aumentar seu lucro em ate{" "}
-          {formatCurrency(dashboard.opportunity.bestOpportunity)}/mes atacando
-          a maior oportunidade financeira abaixo.
-        </p>
+      </div>
 
-        <div className="mt-5 space-y-3">
-          <div className="rounded-2xl border border-norteia-line bg-norteia-bg/24 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <span className="text-sm font-bold text-norteia-text">
-                Reduzir custo direto
-              </span>
-              <strong className="text-right text-sm font-bold text-norteia-primary">
-                {formatCurrency(dashboard.opportunity.costGain)}/mes
-              </strong>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-norteia-muted">
-              Se reduzir seu custo principal para o nivel ideal, pode liberar{" "}
-              {formatCurrency(dashboard.opportunity.costGain)}/mes de lucro.
+      {diag && (
+        <div className="space-y-4">
+          {/* Estimativas principais */}
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4">
+            <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wider mb-3">
+              ⚡ Estimativa do seu cenário
             </p>
-          </div>
-
-          <div className="rounded-2xl border border-norteia-line bg-norteia-bg/24 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <span className="text-sm font-bold text-norteia-text">
-                Melhorar margem
-              </span>
-              <strong className="text-right text-sm font-bold text-norteia-primary">
-                {formatCurrency(dashboard.opportunity.marginGain)}/mes
-              </strong>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-norteia-muted">
-              Chegar a {formatPercent(dashboard.opportunity.targetMargin)} de
-              margem pode elevar seu lucro mensal para{" "}
-              {formatCurrency(dashboard.revenue * dashboard.opportunity.targetMargin)}.
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-norteia-line bg-norteia-bg/24 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <span className="text-sm font-bold text-norteia-text">
-                Ajustar preco
-              </span>
-              <strong className="text-right text-sm font-bold text-norteia-primary">
-                {formatCurrency(dashboard.opportunity.priceGain)}/mes
-              </strong>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-norteia-muted">
-              Quando a margem esta apertada, um ajuste de preco de 5% pode
-              adicionar ate {formatCurrency(dashboard.opportunity.priceGain)}
-              /mes ao lucro.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5 rounded-2xl border border-norteia-line bg-norteia-card p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.14em]">
-            Proxima acao pratica
-          </p>
-          <p className="mt-2 text-sm font-bold leading-6 text-norteia-text">
-            {dashboard.opportunity.action}
-          </p>
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-norteia-line bg-norteia-card p-5 shadow-soft">
-        <div className="mb-4">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-primary">
-            DRE simplificada
-          </p>
-          <h2 className="mt-2 font-title text-xl font-bold text-norteia-text">
-            Resultado mensal
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-norteia-muted">
-            {dashboard.dataSourceLabel}. Esses numeros sao uma base de decisao;
-            ajuste para refletir sua realidade.
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          {dreRows.map(([label, value]) => {
-            const numericValue = Number(value);
-            const isProfit = label === "Lucro mensal";
-
-            return (
-              <div
-                key={label}
-                className="flex items-center justify-between gap-4 border-b border-norteia-line pb-3 last:border-b-0 last:pb-0"
-              >
-                <span className="text-sm text-norteia-muted">{label}</span>
-                <strong
-                  className={`text-right text-sm font-bold ${
-                    isProfit
-                      ? numericValue < 0
-                        ? "text-norteia-risk"
-                        : "text-norteia-primary"
-                      : numericValue < 0
-                        ? "text-norteia-text"
-                        : "text-norteia-primary"
-                  }`}
-                >
-                  {numericValue < 0
-                    ? `- ${formatCurrency(Math.abs(numericValue))}`
-                    : formatCurrency(numericValue)}
-                </strong>
+            <div className="grid grid-cols-2 gap-3 text-center">
+              <div className="bg-gray-900/60 rounded-lg p-3">
+                <p className="text-xs text-gray-400 mb-1">Impostos estimados</p>
+                <p className="text-xl font-bold text-white">{fmt(diag.impostosEstimados)}</p>
+                <p className="text-xs text-gray-500">por mês ({diag.regimeLabel})</p>
               </div>
-            );
-          })}
+              <div className="bg-gray-900/60 rounded-lg p-3">
+                <p className="text-xs text-gray-400 mb-1">Sua margem provável</p>
+                <p className="text-xl font-bold text-white">{diag.margemMin}% – {diag.margemMax}%</p>
+                <p className="text-xs text-gray-500">do faturamento</p>
+              </div>
+              <div className="bg-gray-900/60 rounded-lg p-3">
+                <p className="text-xs text-gray-400 mb-1">Lucro estimado</p>
+                <p className="text-xl font-bold text-emerald-400">{fmt(diag.lucroMin)} – {fmt(diag.lucroMax)}</p>
+                <p className="text-xs text-gray-500">por mês</p>
+              </div>
+              <div className="bg-gray-900/60 rounded-lg p-3">
+                <p className="text-xs text-gray-400 mb-1">CMV ideal p/ você</p>
+                <p className="text-xl font-bold text-white">≤ {diag.cmvIdeal}%</p>
+                <p className="text-xs text-gray-500">da receita</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Alerta principal */}
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex gap-3">
+            <span className="text-xl flex-shrink-0">⚠️</span>
+            <div>
+              <p className="text-sm font-semibold text-amber-300 mb-1">Atenção</p>
+              <p className="text-sm text-gray-300 leading-relaxed">{diag.alertaPrincipal}</p>
+            </div>
+          </div>
+
+          {/* Dica principal */}
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 flex gap-3">
+            <span className="text-xl flex-shrink-0">💡</span>
+            <div>
+              <p className="text-sm font-semibold text-blue-300 mb-1">Onde agir primeiro</p>
+              <p className="text-sm text-gray-300 leading-relaxed">{diag.dicaPrincipal}</p>
+            </div>
+          </div>
+
+          {/* Nota */}
+          <p className="text-xs text-gray-500 text-center">
+            Valores estimados com base no seu perfil. Refine no painel com seus dados reais.
+          </p>
         </div>
-      </section>
+      )}
 
-      <section className="rounded-2xl border border-norteia-alert/35 bg-norteia-alert/10 p-5 shadow-soft">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-alert">
-          Dinheiro deixado na mesa
-        </p>
-        <h2 className="mt-3 font-title text-2xl font-bold text-norteia-text">
-          {formatCurrency(dashboard.missedMoney)}
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-norteia-text/78">
-          Se reduzir seu custo direto para o nivel ideal, pode liberar{" "}
-          {formatCurrency(dashboard.missedMoney)}/mes de lucro.
-        </p>
-      </section>
+      <button
+        onClick={finalizar}
+        className="w-full mt-6 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-gray-900 font-bold rounded-xl transition-colors"
+      >
+        Abrir meu painel →
+      </button>
+    </Screen>
+  );
+}
 
-      <section className="rounded-2xl border border-norteia-primary/35 bg-norteia-primary/10 p-5 shadow-glow">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-norteia-primary">
-          Proxima acao sugerida
-        </p>
-        <p className="mt-3 text-base font-bold leading-7 text-norteia-text">
-          {dashboard.nextAction}
-        </p>
-      </section>
+// ── Wrappers reutilizáveis ────────────────────────────────────────────────────
 
-      {profile.diagnosis?.summary ? (
-        <AlertCard
-          title={profile.diagnosis.title ?? "Diagnostico inicial"}
-          description={profile.diagnosis.summary}
-          tone="primary"
-        />
-      ) : null}
-    </PageShell>
+function Screen({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex justify-center px-4 py-8">
+      <div className="w-full max-w-md">{children}</div>
+    </div>
+  );
+}
+
+function NavButtons({
+  onNext,
+  onBack,
+  nextDisabled,
+  showBack = true,
+  nextLabel = "Continuar →",
+}: {
+  onNext: () => void;
+  onBack?: () => void;
+  nextDisabled?: boolean;
+  showBack?: boolean;
+  nextLabel?: string;
+}) {
+  return (
+    <div className="flex gap-3 mt-8">
+      {showBack && onBack && (
+        <button
+          onClick={onBack}
+          className="flex-1 py-3 border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+        >
+          Voltar
+        </button>
+      )}
+      <button
+        onClick={onNext}
+        disabled={nextDisabled}
+        className="flex-1 py-3 bg-emerald-500 text-gray-900 font-bold rounded-xl hover:bg-emerald-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        {nextLabel}
+      </button>
+    </div>
   );
 }
