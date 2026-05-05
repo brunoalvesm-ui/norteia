@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { BottomNavigation } from "@/components/bottom-navigation";
 import { OnboardingProvider } from "@/context/OnboardingContext";
 
 export const metadata: Metadata = {
@@ -12,7 +13,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="pt-BR">
       <body>
         <OnboardingProvider>
-          {children}
+          <main className="mx-auto min-h-screen w-full max-w-md px-4 pb-28 pt-5 sm:max-w-2xl lg:max-w-4xl">
+            {children}
+          </main>
+          <BottomNavigation />
         </OnboardingProvider>
       </body>
     </html>
