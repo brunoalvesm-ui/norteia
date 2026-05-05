@@ -29,6 +29,20 @@ export type FinancialAdjustments = {
   updatedAt?: string;
 };
 
+export type Sale = {
+  id: string;
+  tableNumber: number;
+  total: number;
+  closedAt: string;
+  items: Array<{
+    productId: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    total: number;
+  }>;
+};
+
 export const financialRulesByBusinessType: Record<BusinessType, FinancialRules> = {
   Comercio: {
     directCost: 0.55,
@@ -122,11 +136,13 @@ export function calculateMissedMoney(revenue: number, directCost: number, idealR
 export function calculateDre(
   profile: BusinessProfile,
   adjustments?: FinancialAdjustments | null,
+  sales: Sale[] = [],
 ) {
   const businessType = normalizeBusinessType(profile.businessType);
   const rules = financialRulesByBusinessType[businessType];
   const estimatedRevenue = getEstimatedRevenue(profile.monthlyRevenue);
-  const revenue = adjustments?.revenue ?? estimatedRevenue;
+  const salesRevenue = sales.reduce((total, sale) => total + sale.total, 0);
+  const revenue = (adjustments?.revenue ?? estimatedRevenue) + salesRevenue;
   const directCost = adjustments?.directCost ?? revenue * rules.directCost;
   const fixedExpenses = adjustments?.fixedExpenses ?? revenue * rules.fixedExpenses;
   const taxes = adjustments?.taxes ?? revenue * rules.taxes;

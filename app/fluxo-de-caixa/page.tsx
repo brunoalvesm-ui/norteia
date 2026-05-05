@@ -8,6 +8,7 @@ import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
   FinancialAdjustments,
+  Sale,
   calculateDre,
   calculatePayrollEstimate,
 } from "@/lib/financial-calculations";
@@ -15,6 +16,7 @@ import { formatCurrency, formatShortDate } from "@/lib/formatters";
 import {
   BUSINESS_PROFILE_STORAGE_KEY,
   FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
+  SALES_STORAGE_KEY,
 } from "@/lib/storage-keys";
 
 type AlertTone = "support" | "alert" | "risk" | "primary";
@@ -38,8 +40,9 @@ function buildMovements(
   profile: BusinessProfile,
   today: Date,
   adjustments?: FinancialAdjustments | null,
+  sales: Sale[] = [],
 ) {
-  const dre = calculateDre(profile, adjustments);
+  const dre = calculateDre(profile, adjustments, sales);
   const { businessType, directCost, fixedExpenses, revenue, taxes } = dre;
   const payroll = calculatePayrollEstimate(revenue, profile.employees);
   const initialBalance = adjustments?.cashBalance ?? revenue * 0.28;
@@ -144,9 +147,10 @@ function buildMovements(
 function buildCashProjection(
   profile: BusinessProfile,
   adjustments?: FinancialAdjustments | null,
+  sales: Sale[] = [],
 ) {
   const today = new Date();
-  const base = buildMovements(profile, today, adjustments);
+  const base = buildMovements(profile, today, adjustments, sales);
   let balance = base.initialBalance;
   let minimumBalance = balance;
   let negativeDate: Date | null = null;
@@ -217,6 +221,20 @@ function buildCashProjection(
   };
 }
 
+function readSales() {
+  const storedSales = localStorage.getItem(SALES_STORAGE_KEY);
+
+  if (!storedSales) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(storedSales) as Sale[];
+  } catch {
+    return [];
+  }
+}
+
 function readFinancialAdjustments() {
   const storedAdjustments = localStorage.getItem(FINANCIAL_ADJUSTMENTS_STORAGE_KEY);
 
@@ -234,6 +252,7 @@ function readFinancialAdjustments() {
 export default function FluxoDeCaixaPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [hasLoadedProfile, setHasLoadedProfile] = useState(false);
 
   useEffect(() => {
@@ -248,12 +267,13 @@ export default function FluxoDeCaixaPage() {
     }
 
     setAdjustments(readFinancialAdjustments());
+    setSales(readSales());
     setHasLoadedProfile(true);
   }, []);
 
   const projection = useMemo(
-    () => (profile ? buildCashProjection(profile, adjustments) : null),
-    [profile, adjustments],
+    () => (profile ? buildCashProjection(profile, adjustments, sales) : null),
+    [profile, adjustments, sales],
   );
 
   if (!hasLoadedProfile) {

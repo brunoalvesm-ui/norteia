@@ -8,6 +8,7 @@ import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
   FinancialAdjustments,
+  Sale,
   calculateDre,
   calculateMargin,
 } from "@/lib/financial-calculations";
@@ -15,6 +16,7 @@ import { formatCurrency, formatPercent } from "@/lib/formatters";
 import {
   BUSINESS_PROFILE_STORAGE_KEY,
   FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
+  SALES_STORAGE_KEY,
 } from "@/lib/storage-keys";
 
 type SimulationMode = "price" | "cost" | "revenue";
@@ -49,8 +51,9 @@ const simulationModes: Array<{
 function buildCurrentScenario(
   profile: BusinessProfile,
   adjustments?: FinancialAdjustments | null,
+  sales: Sale[] = [],
 ) {
-  const dre = calculateDre(profile, adjustments);
+  const dre = calculateDre(profile, adjustments, sales);
 
   return {
     businessType: dre.businessType,
@@ -65,6 +68,20 @@ function buildCurrentScenario(
       ? "Numeros ajustados por voce"
       : "Estimativa inicial",
   };
+}
+
+function readSales() {
+  const storedSales = localStorage.getItem(SALES_STORAGE_KEY);
+
+  if (!storedSales) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(storedSales) as Sale[];
+  } catch {
+    return [];
+  }
 }
 
 function buildSimulatedScenario(
@@ -189,6 +206,7 @@ function readFinancialAdjustments() {
 export default function SimuladorPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [hasLoadedProfile, setHasLoadedProfile] = useState(false);
   const [mode, setMode] = useState<SimulationMode>("price");
   const [percentage, setPercentage] = useState(10);
@@ -205,13 +223,14 @@ export default function SimuladorPage() {
     }
 
     setAdjustments(readFinancialAdjustments());
+    setSales(readSales());
     setHasLoadedProfile(true);
   }, []);
 
   const activeMode = simulationModes.find((item) => item.id === mode) ?? simulationModes[0];
   const current = useMemo(
-    () => (profile ? buildCurrentScenario(profile, adjustments) : null),
-    [profile, adjustments],
+    () => (profile ? buildCurrentScenario(profile, adjustments, sales) : null),
+    [profile, adjustments, sales],
   );
   const simulated = useMemo(
     () => (current ? buildSimulatedScenario(current, mode, percentage) : null),

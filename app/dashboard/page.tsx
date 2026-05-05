@@ -8,6 +8,7 @@ import { PageShell } from "@/components/page-shell";
 import {
   BusinessProfile,
   FinancialAdjustments,
+  Sale,
   calculateDre,
   normalizeText,
 } from "@/lib/financial-calculations";
@@ -15,6 +16,7 @@ import { formatCurrency, formatPercent } from "@/lib/formatters";
 import {
   BUSINESS_PROFILE_STORAGE_KEY,
   FINANCIAL_ADJUSTMENTS_STORAGE_KEY,
+  SALES_STORAGE_KEY,
 } from "@/lib/storage-keys";
 
 type AlertTone = "support" | "alert" | "risk" | "primary";
@@ -27,8 +29,9 @@ function knowsNothing(value?: string) {
 function buildDashboard(
   profile: BusinessProfile,
   adjustments?: FinancialAdjustments | null,
+  sales: Sale[] = [],
 ) {
-  const dre = calculateDre(profile, adjustments);
+  const dre = calculateDre(profile, adjustments, sales);
   const hasHighCost = dre.directCostPercent > dre.rules.idealDirectCost;
   const hasLowMargin = dre.netMargin < 0.1;
   const targetMargin = 0.15;
@@ -161,6 +164,20 @@ function createAdjustmentValues(
   };
 }
 
+function readSales() {
+  const storedSales = localStorage.getItem(SALES_STORAGE_KEY);
+
+  if (!storedSales) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(storedSales) as Sale[];
+  } catch {
+    return [];
+  }
+}
+
 function readFinancialAdjustments() {
   const storedAdjustments = localStorage.getItem(FINANCIAL_ADJUSTMENTS_STORAGE_KEY);
 
@@ -178,6 +195,7 @@ function readFinancialAdjustments() {
 export default function DashboardPage() {
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [adjustments, setAdjustments] = useState<FinancialAdjustments | null>(null);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [formValues, setFormValues] = useState<Omit<FinancialAdjustments, "updatedAt"> | null>(
     null,
   );
@@ -196,13 +214,14 @@ export default function DashboardPage() {
     }
 
     setAdjustments(readFinancialAdjustments());
+    setSales(readSales());
 
     setHasLoadedProfile(true);
   }, []);
 
   const dashboard = useMemo(
-    () => (profile ? buildDashboard(profile, adjustments) : null),
-    [profile, adjustments],
+    () => (profile ? buildDashboard(profile, adjustments, sales) : null),
+    [profile, adjustments, sales],
   );
 
   function openAdjustPanel() {

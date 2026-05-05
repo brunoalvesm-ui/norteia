@@ -7,7 +7,7 @@ import {
   ChartNoAxesCombined,
   Home,
   Landmark,
-  Route,
+  SquareMenu,
 } from "lucide-react";
 
 const items = [
@@ -27,14 +27,14 @@ const items = [
     icon: Landmark,
   },
   {
+    href: "/mesas",
+    label: "Mesas",
+    icon: SquareMenu,
+  },
+  {
     href: "/rotina",
     label: "Rotina",
     icon: CalendarCheck,
-  },
-  {
-    href: "/onboarding",
-    label: "Guia",
-    icon: Route,
   },
 ];
 
