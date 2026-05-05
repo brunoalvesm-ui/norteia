@@ -243,7 +243,7 @@ export default function OnboardingPage() {
               <div className="bg-gray-900/60 rounded-lg p-3">
                 <p className="text-xs text-gray-400 mb-1">Impostos estimados</p>
                 <p className="text-xl font-bold text-white">{fmt(diag.impostosEstimados)}</p>
-                <p className="text-xs text-gray-500">por mês ({diag.regimeLabel})</p>
+                <p className="text-xs text-gray-500">por mês ({diag.impostoLabel})</p>
               </div>
               <div className="bg-gray-900/60 rounded-lg p-3">
                 <p className="text-xs text-gray-400 mb-1">Sua margem provável</p>

@@ -1,4 +1,10 @@
-export type BusinessType = "Comercio" | "Servico" | "Industria" | "Outro";
+export type BusinessType =
+  | "Comercio"
+  | "Servico"
+  | "Industria"
+  | "Restaurante"
+  | "Outro";
+export type TaxRegime = "MEI" | "Simples Nacional" | "Lucro Presumido" | "Nao sei";
 
 export type BusinessProfile = {
   businessType?: string;
@@ -6,6 +12,7 @@ export type BusinessProfile = {
   employees?: string;
   knowsProfit?: string;
   knowsMainCost?: string;
+  taxRegime?: string;
   diagnosis?: {
     level?: string;
     title?: string;
@@ -85,6 +92,12 @@ export const financialRulesByBusinessType: Record<BusinessType, FinancialRules> 
     taxes: 0.09,
     idealDirectCost: 0.42,
   },
+  Restaurante: {
+    directCost: 0.42,
+    fixedExpenses: 0.22,
+    taxes: 0.09,
+    idealDirectCost: 0.35,
+  },
   Outro: {
     directCost: 0.4,
     fixedExpenses: 0.2,
@@ -115,7 +128,29 @@ export function normalizeBusinessType(value?: string): BusinessType {
     return "Industria";
   }
 
+  if (normalized === "restaurante" || normalized === "alimentacao") {
+    return "Restaurante";
+  }
+
   return "Outro";
+}
+
+export function normalizeTaxRegime(value?: string): TaxRegime {
+  const normalized = normalizeText(value);
+
+  if (normalized === "mei") {
+    return "MEI";
+  }
+
+  if (normalized === "simples" || normalized === "simples nacional") {
+    return "Simples Nacional";
+  }
+
+  if (normalized === "lucro_presumido" || normalized === "lucro presumido") {
+    return "Lucro Presumido";
+  }
+
+  return "Nao sei";
 }
 
 export function getEstimatedRevenue(monthlyRevenue?: string) {
@@ -142,6 +177,77 @@ export function getEstimatedRevenue(monthlyRevenue?: string) {
 
 export function getFinancialRules(businessType?: string) {
   return financialRulesByBusinessType[normalizeBusinessType(businessType)];
+}
+
+export function calculateEstimatedTaxes(
+  revenue: number,
+  businessType?: string,
+  taxRegime?: string,
+) {
+  const normalizedBusinessType = normalizeBusinessType(businessType);
+  const normalizedTaxRegime = normalizeTaxRegime(taxRegime);
+
+  if (normalizedTaxRegime === "MEI") {
+    const fixedTaxByBusinessType: Record<BusinessType, number> = {
+      Comercio: 82,
+      Servico: 88,
+      Industria: 90,
+      Restaurante: 88,
+      Outro: 85,
+    };
+
+    return {
+      amount: fixedTaxByBusinessType[normalizedBusinessType],
+      rate: 0,
+      label: "DAS mensal aproximado",
+      description: "Seu imposto no MEI costuma ser previsivel e fixo.",
+      isFixed: true,
+      regime: normalizedTaxRegime,
+    };
+  }
+
+  const simplesRates: Record<BusinessType, number> = {
+    Comercio: 0.06,
+    Servico: 0.105,
+    Industria: 0.08,
+    Restaurante: 0.09,
+    Outro: 0.09,
+  };
+  const lucroPresumidoRates: Record<BusinessType, number> = {
+    Comercio: 0.135,
+    Servico: 0.155,
+    Industria: 0.14,
+    Restaurante: 0.13,
+    Outro: 0.14,
+  };
+  const genericRates: Record<BusinessType, number> = {
+    Comercio: 0.08,
+    Servico: 0.1,
+    Industria: 0.09,
+    Restaurante: 0.09,
+    Outro: 0.09,
+  };
+  const rate =
+    normalizedTaxRegime === "Simples Nacional"
+      ? simplesRates[normalizedBusinessType]
+      : normalizedTaxRegime === "Lucro Presumido"
+        ? lucroPresumidoRates[normalizedBusinessType]
+        : genericRates[normalizedBusinessType];
+
+  return {
+    amount: revenue * rate,
+    rate,
+    label:
+      normalizedTaxRegime === "Nao sei"
+        ? "Estimativa aproximada"
+        : normalizedTaxRegime,
+    description:
+      normalizedTaxRegime === "Nao sei"
+        ? "Estimativa aproximada. Confirme seu regime tributario para aumentar a confianca dos numeros."
+        : `Estimativa inteligente para ${normalizedTaxRegime}.`,
+    isFixed: false,
+    regime: normalizedTaxRegime,
+  };
 }
 
 export function calculateMargin(amount: number, revenue: number) {
@@ -364,9 +470,14 @@ export function calculateDre(
   const estimatedRevenue = getEstimatedRevenue(profile.monthlyRevenue);
   const salesRevenue = sales.reduce((total, sale) => total + sale.total, 0);
   const revenue = (adjustments?.revenue ?? estimatedRevenue) + salesRevenue;
+  const estimatedTaxes = calculateEstimatedTaxes(
+    revenue,
+    businessType,
+    profile.taxRegime,
+  );
   const directCost = adjustments?.directCost ?? revenue * rules.directCost;
   const fixedExpenses = adjustments?.fixedExpenses ?? revenue * rules.fixedExpenses;
-  const taxes = adjustments?.taxes ?? revenue * rules.taxes;
+  const taxes = adjustments?.taxes ?? estimatedTaxes.amount;
   const profit = revenue - directCost - fixedExpenses - taxes;
   const netMargin = calculateMargin(profit, revenue);
   const directCostPercent = calculateMargin(directCost, revenue);
@@ -378,6 +489,7 @@ export function calculateDre(
     directCost,
     fixedExpenses,
     taxes,
+    taxInfo: estimatedTaxes,
     profit,
     netMargin,
     directCostPercent,

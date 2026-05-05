@@ -10,6 +10,7 @@ import {
   FinancialAdjustments,
   Sale,
   calculateDre,
+  calculateEstimatedTaxes,
   calculateMargin,
 } from "@/lib/financial-calculations";
 import { formatCurrency, formatPercent } from "@/lib/formatters";
@@ -64,6 +65,8 @@ function buildCurrentScenario(
     profit: dre.profit,
     margin: dre.netMargin,
     rules: dre.rules,
+    taxRegime: profile.taxRegime,
+    taxInfo: dre.taxInfo,
     dataSourceLabel: adjustments
       ? "Numeros ajustados por voce"
       : "Estimativa inicial",
@@ -93,13 +96,18 @@ function buildSimulatedScenario(
 
   if (mode === "price") {
     const revenue = current.revenue * (1 + rate);
-    const profit = revenue - current.directCost - current.fixedExpenses - current.taxes;
+    const taxes = calculateEstimatedTaxes(
+      revenue,
+      current.businessType,
+      current.taxRegime,
+    ).amount;
+    const profit = revenue - current.directCost - current.fixedExpenses - taxes;
 
     return {
       revenue,
       directCost: current.directCost,
       fixedExpenses: current.fixedExpenses,
-      taxes: current.taxes,
+      taxes,
       profit,
       margin: calculateMargin(profit, revenue),
       insight: `Com aumento de ${percentage}% no preco, seu lucro pode subir ${formatCurrency(
@@ -127,7 +135,11 @@ function buildSimulatedScenario(
 
   const revenue = current.revenue * (1 + rate);
   const directCost = revenue * current.rules.directCost;
-  const taxes = revenue * current.rules.taxes;
+  const taxes = calculateEstimatedTaxes(
+    revenue,
+    current.businessType,
+    current.taxRegime,
+  ).amount;
   const profit = revenue - directCost - current.fixedExpenses - taxes;
 
   return {
@@ -295,6 +307,16 @@ export default function SimuladorPage() {
           adjustments
             ? "As simulacoes usam os numeros ajustados por voce no dashboard."
             : "Esses numeros sao estimativas iniciais. Ajuste no dashboard para refletir sua realidade."
+        }
+        tone="support"
+      />
+
+      <AlertCard
+        title={current.taxInfo.label}
+        description={
+          current.taxInfo.regime === "MEI"
+            ? "Seu imposto no MEI costuma ser previsivel e fixo, entao o simulador nao aplica percentual sobre faturamento."
+            : current.taxInfo.description
         }
         tone="support"
       />

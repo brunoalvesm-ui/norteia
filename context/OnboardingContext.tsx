@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { calculateEstimatedTaxes } from "@/lib/financial-calculations";
+import { BUSINESS_PROFILE_STORAGE_KEY } from "@/lib/storage-keys";
 
 export type TipoNegocio = "comercio" | "servico" | "industria" | "outro" | "";
 export type FaixaFaturamento = "ate20" | "20a50" | "50a100" | "100mais" | "";
@@ -28,6 +30,7 @@ export interface Diagnostico {
   alertaPrincipal: string;
   dicaPrincipal: string;
   regimeLabel: string;
+  impostoLabel: string;
 }
 
 const STORAGE_KEY = "norteia_onboarding";
@@ -64,18 +67,11 @@ const cmvIdealMap: Record<string, number> = {
   outro:     40,
 };
 
-const aliquotaMap: Record<string, number> = {
-  mei:              0.05,
-  simples:          0.0725,
-  lucro_presumido:  0.115,
-  nao_sei:          0.0725,
-};
-
 const regimeLabelMap: Record<string, string> = {
   mei:             "MEI",
   simples:         "Simples Nacional",
   lucro_presumido: "Lucro Presumido",
-  nao_sei:         "Simples Nacional (estimativa)",
+  nao_sei:         "Nao sei",
 };
 
 export function calcularDiagnostico(data: OnboardingData): Diagnostico | null {
@@ -83,8 +79,8 @@ export function calcularDiagnostico(data: OnboardingData): Diagnostico | null {
 
   const fat    = faturamentoMap[data.faturamento] ?? 35000;
   const regime = data.regime || "nao_sei";
-  const aliq   = aliquotaMap[regime] ?? 0.0725;
-  const impostos = Math.round(fat * aliq);
+  const taxInfo = calculateEstimatedTaxes(fat, data.tipo, regime);
+  const impostos = Math.round(taxInfo.amount);
 
   const [mMin, mMax] = margemMap[data.tipo] ?? [10, 20];
   const lucroMin = Math.round(fat * mMin / 100);
@@ -98,6 +94,11 @@ export function calcularDiagnostico(data: OnboardingData): Diagnostico | null {
     industria: "Na indústria, custos fixos elevados exigem volume mínimo. Você sabe qual é o seu ponto de equilíbrio?",
     outro:     "Sem clareza dos custos fixos vs. variáveis, é impossível saber se você está lucrando de verdade.",
   };
+
+  if (regime === "mei") {
+    alertas[data.tipo] =
+      "Seu imposto no MEI costuma ser previsivel e fixo. O ponto de atencao fica em preco, custo e rotina de caixa.";
+  }
 
   const dicas: Record<string, string> = {
     comercio:  "Revisar o CMV e aumentar o preço médio em 5–8% pode elevar seu lucro em até 60% sem vender mais.",
@@ -117,6 +118,7 @@ export function calcularDiagnostico(data: OnboardingData): Diagnostico | null {
     alertaPrincipal: alertas[data.tipo] ?? alertas.outro,
     dicaPrincipal:   dicas[data.tipo]   ?? dicas.outro,
     regimeLabel:     regimeLabelMap[regime] ?? "Simples Nacional",
+    impostoLabel:    taxInfo.label,
   };
 }
 
@@ -128,6 +130,60 @@ interface OnboardingContextType {
   setField: <K extends keyof OnboardingData>(key: K, value: OnboardingData[K]) => void;
   concluir: () => void;
   resetar: () => void;
+}
+
+const businessTypeMap: Record<Exclude<TipoNegocio, "">, string> = {
+  comercio: "Comercio",
+  servico: "Servico",
+  industria: "Industria",
+  outro: "Outro",
+};
+
+const monthlyRevenueMap: Record<Exclude<FaixaFaturamento, "">, string> = {
+  ate20: "Ate R$ 20 mil",
+  "20a50": "R$ 20 mil a R$ 50 mil",
+  "50a100": "R$ 50 mil a R$ 100 mil",
+  "100mais": "Acima de R$ 100 mil",
+};
+
+const employeesMap: Record<Exclude<QtdFuncionarios, "">, string> = {
+  nenhum: "So eu",
+  "1a3": "1 a 3",
+  "4a10": "4 a 10",
+  mais10: "Mais de 10",
+};
+
+const knowsProfitMap: Record<Exclude<ConheceLucro, "">, string> = {
+  sim: "Sim, sei com precisao",
+  mais_ou_menos: "Tenho uma ideia",
+  nao: "Nao sei",
+};
+
+function saveBusinessProfile(data: OnboardingData) {
+  if (!data.tipo || !data.faturamento || !data.funcionarios) {
+    return;
+  }
+
+  const diagnosis = calcularDiagnostico(data);
+
+  localStorage.setItem(
+    BUSINESS_PROFILE_STORAGE_KEY,
+    JSON.stringify({
+      businessType: businessTypeMap[data.tipo],
+      monthlyRevenue: monthlyRevenueMap[data.faturamento],
+      employees: employeesMap[data.funcionarios],
+      knowsProfit: data.conheceLucro ? knowsProfitMap[data.conheceLucro] : "Nao sei",
+      knowsMainCost: "Nao sei",
+      taxRegime: regimeLabelMap[data.regime || "nao_sei"],
+      diagnosis: {
+        level: data.conheceLucro === "nao" ? "alert" : "primary",
+        title: "Diagnostico inicial",
+        summary:
+          diagnosis?.alertaPrincipal ??
+          "Estimativa inicial criada a partir do seu perfil.",
+      },
+    }),
+  );
 }
 
 const OnboardingContext = createContext<OnboardingContextType | null>(null);
@@ -154,7 +210,10 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     setData(prev => ({ ...prev, [key]: value }));
   };
 
-  const concluir = () => setData(prev => ({ ...prev, concluido: true }));
+  const concluir = () => {
+    saveBusinessProfile(data);
+    setData(prev => ({ ...prev, concluido: true }));
+  };
   const resetar  = () => { setData(defaultData); localStorage.removeItem(STORAGE_KEY); };
 
   const diagnostico = calcularDiagnostico(data);
